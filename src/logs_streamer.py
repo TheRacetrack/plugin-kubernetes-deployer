@@ -7,9 +7,9 @@ from kubernetes.client import V1Pod
 from kubernetes.watch import Watch
 
 from lifecycle.monitor.base import LogsStreamer
-from lifecycle.monitor.kubernetes.utils import get_fatman_pod_names, k8s_api_client, K8S_NAMESPACE, \
-    K8S_FATMAN_RESOURCE_LABEL
 from racetrack_commons.deploy.resource import fatman_resource_name
+
+from utils import get_fatman_pod_names, k8s_api_client, K8S_NAMESPACE, K8S_FATMAN_RESOURCE_LABEL
 
 
 class KubernetesLogsStreamer(LogsStreamer):

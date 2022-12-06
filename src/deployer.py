@@ -16,7 +16,6 @@ from lifecycle.config import Config
 from lifecycle.deployer.base import FatmanDeployer
 from lifecycle.deployer.secrets import FatmanSecrets
 from lifecycle.fatman.models_registry import read_fatman_family_model
-from lifecycle.monitor.kubernetes.utils import K8S_NAMESPACE
 from racetrack_client.client.env import merge_env_vars
 from racetrack_client.client_config.client_config import Credentials
 from racetrack_client.log.logs import get_logger
@@ -32,6 +31,8 @@ from racetrack_commons.api.tracing import get_tracing_header_name
 from racetrack_commons.deploy.image import get_fatman_image, get_fatman_user_module_image
 from racetrack_commons.deploy.resource import fatman_resource_name, fatman_user_module_resource_name
 from racetrack_commons.entities.dto import FatmanDto, FatmanStatus, FatmanFamilyDto
+
+from utils import K8S_NAMESPACE
 
 logger = get_logger(__name__)
 

@@ -6,8 +6,6 @@ from kubernetes.client import V1ObjectMeta, ApiException
 from lifecycle.config import Config
 from lifecycle.monitor.base import FatmanMonitor
 from lifecycle.monitor.health import check_until_fatman_is_operational, quick_check_fatman_condition
-from lifecycle.monitor.kubernetes.utils import k8s_api_client, K8S_FATMAN_NAME_LABEL, \
-    K8S_FATMAN_VERSION_LABEL, K8S_NAMESPACE, K8S_FATMAN_RESOURCE_LABEL, get_fatman_deployments, get_fatman_pods
 from lifecycle.monitor.metric_parser import read_last_call_timestamp_metric, scrape_metrics
 from racetrack_client.log.context_error import wrap_context
 from racetrack_client.log.exception import short_exception_details
@@ -16,6 +14,9 @@ from racetrack_client.utils.time import datetime_to_timestamp
 from racetrack_commons.deploy.resource import fatman_resource_name
 from racetrack_commons.entities.dto import FatmanDto, FatmanStatus
 from racetrack_client.log.logs import get_logger
+
+from utils import k8s_api_client, K8S_FATMAN_NAME_LABEL, K8S_FATMAN_VERSION_LABEL, \
+    K8S_NAMESPACE, K8S_FATMAN_RESOURCE_LABEL, get_fatman_deployments, get_fatman_pods
 
 logger = get_logger(__name__)
 
