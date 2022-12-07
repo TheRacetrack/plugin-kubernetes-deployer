@@ -39,8 +39,9 @@ logger = get_logger(__name__)
 
 class KubernetesFatmanDeployer(FatmanDeployer):
 
-    def __init__(self) -> None:
+    def __init__(self, src_dir: Path) -> None:
         self.infrastructure_name = 'kubernetes'
+        self.src_dir = src_dir
 
     def deploy_fatman(
         self,
@@ -116,7 +117,7 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             render_vars['user_module_container'] = fatman_user_module_resource_name(manifest.name, manifest.version)
             render_vars['env_vars']['FATMAN_ENTRYPOINT_HOSTNAME'] = 'localhost'
 
-        _apply_templated_resource('fatman_template.yaml', render_vars)
+        _apply_templated_resource('fatman_template.yaml', render_vars, self.src_dir)
 
         return FatmanDto(
             name=manifest.name,
@@ -195,7 +196,7 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             'secret_runtime_env': _encode_secret_key(fatman_secrets.secret_runtime_env),
             'fatman_k8s_namespace': K8S_NAMESPACE,
         }
-        _apply_templated_resource('secret_template.yaml', render_vars)
+        _apply_templated_resource('secret_template.yaml', render_vars, self.src_dir)
 
     def get_fatman_secrets(self,
                            fatman_name: str,
@@ -227,11 +228,11 @@ class KubernetesFatmanDeployer(FatmanDeployer):
         )
 
 
-def _apply_templated_resource(template_filename: str, render_vars: Dict[str, Any]):
+def _apply_templated_resource(template_filename: str, render_vars: Dict[str, Any], src_dir: Path):
     """Create resource from YAML template and apply it to kubernetes using kubectl apply"""
     fd, path = tempfile.mkstemp(prefix=template_filename, suffix='.yaml')
     try:
-        resource_yaml = _template_resource(template_filename, render_vars)
+        resource_yaml = _template_resource(template_filename, render_vars, src_dir)
         with open(fd, 'w') as f:
             f.write(resource_yaml)
         shell(f'kubectl apply -f {path}')
@@ -240,9 +241,9 @@ def _apply_templated_resource(template_filename: str, render_vars: Dict[str, Any
             os.remove(path)
 
 
-def _template_resource(template_filename: str, render_vars: Dict[str, Any]) -> str:
+def _template_resource(template_filename: str, render_vars: Dict[str, Any], src_dir: Path) -> str:
     """Load template from YAML, render templated vars and return as a string"""
-    templates_dir = Path(__file__).parent / 'templates'
+    templates_dir = src_dir / 'templates'
     template_content = (templates_dir / template_filename).absolute().read_text()
     template = Template(template_content)
     templated = template.render(**render_vars)

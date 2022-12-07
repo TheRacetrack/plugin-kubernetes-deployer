@@ -23,7 +23,7 @@ class Plugin:
         """
         return {
             'kubernetes': InfrastructureTarget(
-                fatman_deployer=KubernetesFatmanDeployer(),
+                fatman_deployer=KubernetesFatmanDeployer(self.plugin_dir),
                 fatman_monitor=KubernetesMonitor(),
                 logs_streamer=KubernetesLogsStreamer(),
             ),
