@@ -243,8 +243,12 @@ def _apply_templated_resource(template_filename: str, render_vars: Dict[str, Any
 
 def _template_resource(template_filename: str, render_vars: Dict[str, Any], src_dir: Path) -> str:
     """Load template from YAML, render templated vars and return as a string"""
-    templates_dir = src_dir / 'templates'
-    template_content = (templates_dir / template_filename).absolute().read_text()
+    template_path = src_dir / 'templates' / template_filename
+    override_template_path = Path('/mnt/templates') / template_filename
+    if override_template_path.is_file():
+        template_path = override_template_path
+
+    template_content = template_path.read_text()
     template = Template(template_content)
     templated = template.render(**render_vars)
     return templated
