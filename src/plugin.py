@@ -1,17 +1,16 @@
 from __future__ import annotations
+import sys
 from typing import Any
 
 from racetrack_client.log.logs import get_logger
 
-logger = get_logger(__name__)
-
-try:
+if 'lifecycle' in sys.modules:
     from lifecycle.deployer.infra_target import InfrastructureTarget
     from deployer import KubernetesFatmanDeployer
     from monitor import KubernetesMonitor
     from logs_streamer import KubernetesLogsStreamer
-except ModuleNotFoundError:
-    logger.debug('Skipping Lifecycle\'s imports')
+
+logger = get_logger(__name__)
 
 
 class Plugin:
