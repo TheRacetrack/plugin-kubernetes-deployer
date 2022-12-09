@@ -101,4 +101,4 @@ class KubernetesMonitor(FatmanMonitor):
                             f' --container={resource_name}')
 
     def _get_internal_fatman_url(self, fatman: FatmanDto) -> str:
-        return f'http://{fatman.internal_name}.{K8S_NAMESPACE}.svc:7000'
+        return f'http://{fatman.internal_name}'
