@@ -119,6 +119,7 @@ class KubernetesFatmanDeployer(FatmanDeployer):
 
         _apply_templated_resource('fatman_template.yaml', render_vars, self.src_dir)
 
+        internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
         return FatmanDto(
             name=manifest.name,
             version=manifest.version,
@@ -126,7 +127,7 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             create_time=deployment_timestamp,
             update_time=deployment_timestamp,
             manifest=manifest,
-            internal_name=resource_name,
+            internal_name=internal_name,
             image_tag=tag,
             infrastructure_target=self.infrastructure_name,
         )

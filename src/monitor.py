@@ -49,6 +49,7 @@ class KubernetesMonitor(FatmanMonitor):
                 continue
 
             start_timestamp = datetime_to_timestamp(pod.metadata.creation_timestamp)
+            internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
             fatman = FatmanDto(
                 name=fatman_name,
                 version=fatman_version,
@@ -56,7 +57,7 @@ class KubernetesMonitor(FatmanMonitor):
                 create_time=start_timestamp,
                 update_time=start_timestamp,
                 manifest=None,
-                internal_name=resource_name,
+                internal_name=internal_name,
                 error=None,
                 infrastructure_target=self.infrastructure_name,
             )
