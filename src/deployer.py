@@ -28,8 +28,8 @@ from racetrack_commons.plugin.core import PluginCore
 from racetrack_commons.plugin.engine import PluginEngine
 from racetrack_commons.api.debug import debug_mode_enabled
 from racetrack_commons.api.tracing import get_tracing_header_name
-from racetrack_commons.deploy.image import get_fatman_image, get_fatman_user_module_image
-from racetrack_commons.deploy.resource import fatman_resource_name, fatman_user_module_resource_name
+from racetrack_commons.deploy.image import get_fatman_image
+from racetrack_commons.deploy.resource import fatman_resource_name
 from racetrack_commons.entities.dto import FatmanDto, FatmanStatus, FatmanFamilyDto
 
 from utils import K8S_NAMESPACE
@@ -51,6 +51,7 @@ class KubernetesFatmanDeployer(FatmanDeployer):
         tag: str,
         runtime_env_vars: Dict[str, str],
         family: FatmanFamilyDto,
+        containers_num: int = 1,
     ) -> FatmanDto:
         """Deploy Job on Kubernetes and expose Service accessible by Fatman name"""
         resource_name = fatman_resource_name(manifest.name, manifest.version)
@@ -64,6 +65,7 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             'AUTH_TOKEN': auth_subject.token,
             'FATMAN_DEPLOYMENT_TIMESTAMP': deployment_timestamp,
             'REQUEST_TRACING_HEADER': get_tracing_header_name(),
+            'FATMAN_USER_MODULE_HOSTNAME': 'localhost',
         }
         if config.open_telemetry_enabled:
             common_env_vars['OPENTELEMETRY_ENDPOINT'] = config.open_telemetry_endpoint
@@ -104,18 +106,20 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             'entrypoint_image': get_fatman_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag),
             'deployment_timestamp': deployment_timestamp,
             'env_vars': runtime_env_vars,
-            'user_module_image': None,
-            'user_module_container': None,
             'memory_min': memory_min,
             'memory_max': memory_max,
             'cpu_min': cpu_min,
             'cpu_max': cpu_max,
             'fatman_k8s_namespace': K8S_NAMESPACE,
         }
-        if manifest.docker and manifest.docker.dockerfile_path:  # Dockerfile job type
-            render_vars['user_module_image'] = get_fatman_user_module_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag)
-            render_vars['user_module_container'] = fatman_user_module_resource_name(manifest.name, manifest.version)
-            render_vars['env_vars']['FATMAN_ENTRYPOINT_HOSTNAME'] = 'localhost'
+        
+        container_vars = []  # list of container tuples: (container_name, image_name, container_port)
+        for container_index in range(containers_num):
+            container_name = get_container_name(resource_name, container_index)
+            image_name = get_fatman_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag, container_index)
+            container_port = 7000 + container_index
+            container_vars.append((container_name, image_name, container_port))
+        render_vars['containers'] = container_vars
 
         _apply_templated_resource('fatman_template.yaml', render_vars, self.src_dir)
 
@@ -270,3 +274,10 @@ def _decode_secret_key(secret_data: Dict[str, str], key: str) -> Optional[Any]:
     decoded_json: str = b64decode(encoded.encode()).decode()
     decoded_obj = json.loads(decoded_json)
     return decoded_obj
+
+
+def get_container_name(resource_name: str, container_index: int) -> str:
+    if container_index == 0:
+        return resource_name
+    else:
+        return f'{resource_name}-{container_index}'

@@ -35,11 +35,12 @@ spec:
       imagePullSecrets:
         - name: docker-registry-read-secret
       containers:
-        - name: {{ resource_name }}
-          image: "{{ entrypoint_image }}"
+{% for container_name, image_name, container_port in containers %}
+        - name: {{ container_name }}
+          image: "{{ image_name }}"
           imagePullPolicy: Always
           ports:
-            - containerPort: 7000
+            - containerPort: {{ container_port }}
           tty: true
           securityContext:
             allowPrivilegeEscalation: false
@@ -57,33 +58,7 @@ spec:
             - name: {{ env_key }}
               value: "{{ env_value }}"
 {% endfor %}
-{% if user_module_image %}
-        - name: {{ user_module_container }}
-          image: "{{ user_module_image }}"
-          imagePullPolicy: Always
-          ports:
-            - containerPort: 7004
-          tty: true
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["all"]
-          resources:
-            requests:
-              memory: "{{ memory_min }}"
-              cpu: "{{ cpu_min }}"
-            limits:
-              memory: "{{ memory_max }}"
-              cpu: "{{ cpu_max }}"
-{% if env_vars %}
-          env:
-{% for env_key, env_value in env_vars.items() %}
-            - name: {{ env_key }}
-              value: "{{ env_value }}"
 {% endfor %}
-{% endif %}
-
-{% endif %}
 
 ---
 apiVersion: v1
