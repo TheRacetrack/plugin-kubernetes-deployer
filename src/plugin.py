@@ -17,7 +17,7 @@ class Plugin:
 
     def infrastructure_targets(self) -> dict[str, Any]:
         """
-        Infrastracture Targets (deployment targets) for Fatmen provided by this plugin
+        Infrastructure Targets (deployment targets) for Fatmen provided by this plugin
         :return dict of infrastructure name -> an instance of lifecycle.deployer.infra_target.InfrastructureTarget
         """
         return {
