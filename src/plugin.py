@@ -6,7 +6,7 @@ from racetrack_client.log.logs import get_logger
 
 if 'lifecycle' in sys.modules:
     from lifecycle.deployer.infra_target import InfrastructureTarget
-    from deployer import KubernetesFatmanDeployer
+    from deployer import KubernetesJobDeployer
     from monitor import KubernetesMonitor
     from logs_streamer import KubernetesLogsStreamer
 
@@ -17,13 +17,13 @@ class Plugin:
 
     def infrastructure_targets(self) -> dict[str, Any]:
         """
-        Infrastructure Targets (deployment targets) for Fatmen provided by this plugin
+        Infrastructure Targets (deployment targets) for Job provided by this plugin
         :return dict of infrastructure name -> an instance of lifecycle.deployer.infra_target.InfrastructureTarget
         """
         return {
             'kubernetes': InfrastructureTarget(
-                fatman_deployer=KubernetesFatmanDeployer(self.plugin_dir),
-                fatman_monitor=KubernetesMonitor(),
+                job_deployer=KubernetesJobDeployer(self.plugin_dir),
+                job_monitor=KubernetesMonitor(),
                 logs_streamer=KubernetesLogsStreamer(),
             ),
         }

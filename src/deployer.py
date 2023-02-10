@@ -11,11 +11,11 @@ from kubernetes.client import ApiException
 from kubernetes.config import load_incluster_config
 from kubernetes.client import V1Secret
 
-from lifecycle.auth.subject import get_auth_subject_by_fatman_family
+from lifecycle.auth.subject import get_auth_subject_by_job_family
 from lifecycle.config import Config
-from lifecycle.deployer.base import FatmanDeployer
-from lifecycle.deployer.secrets import FatmanSecrets
-from lifecycle.fatman.models_registry import read_fatman_family_model
+from lifecycle.deployer.base import JobDeployer
+from lifecycle.deployer.secrets import JobSecrets
+from lifecycle.job.models_registry import read_job_family_model
 from racetrack_client.client.env import merge_env_vars
 from racetrack_client.client_config.client_config import Credentials
 from racetrack_client.log.logs import get_logger
@@ -28,49 +28,49 @@ from racetrack_commons.plugin.core import PluginCore
 from racetrack_commons.plugin.engine import PluginEngine
 from racetrack_commons.api.debug import debug_mode_enabled
 from racetrack_commons.api.tracing import get_tracing_header_name
-from racetrack_commons.deploy.image import get_fatman_image
-from racetrack_commons.deploy.resource import fatman_resource_name
-from racetrack_commons.entities.dto import FatmanDto, FatmanStatus, FatmanFamilyDto
+from racetrack_commons.deploy.image import get_job_image
+from racetrack_commons.deploy.resource import job_resource_name
+from racetrack_commons.entities.dto import JobDto, JobStatus, JobFamilyDto
 
 from utils import K8S_NAMESPACE
 
 logger = get_logger(__name__)
 
 
-class KubernetesFatmanDeployer(FatmanDeployer):
+class KubernetesJobDeployer(JobDeployer):
 
     def __init__(self, src_dir: Path) -> None:
         self.infrastructure_name = 'kubernetes'
         self.src_dir = src_dir
 
-    def deploy_fatman(
+    def deploy_job(
         self,
         manifest: Manifest,
         config: Config,
         plugin_engine: PluginEngine,
         tag: str,
         runtime_env_vars: Dict[str, str],
-        family: FatmanFamilyDto,
+        family: JobFamilyDto,
         containers_num: int = 1,
-    ) -> FatmanDto:
-        """Deploy Job on Kubernetes and expose Service accessible by Fatman name"""
-        resource_name = fatman_resource_name(manifest.name, manifest.version)
+    ) -> JobDto:
+        """Deploy Job on Kubernetes and expose Service accessible by Job name"""
+        resource_name = job_resource_name(manifest.name, manifest.version)
         deployment_timestamp = datetime_to_timestamp(now())
-        family_model = read_fatman_family_model(family.name)
-        auth_subject = get_auth_subject_by_fatman_family(family_model)
+        family_model = read_job_family_model(family.name)
+        auth_subject = get_auth_subject_by_job_family(family_model)
 
         common_env_vars = {
             'PUB_URL': config.internal_pub_url,
-            'FATMAN_NAME': manifest.name,
+            'JOB_NAME': manifest.name,
             'AUTH_TOKEN': auth_subject.token,
-            'FATMAN_DEPLOYMENT_TIMESTAMP': deployment_timestamp,
+            'JOB_DEPLOYMENT_TIMESTAMP': deployment_timestamp,
             'REQUEST_TRACING_HEADER': get_tracing_header_name(),
-            'FATMAN_USER_MODULE_HOSTNAME': 'localhost',
+            'JOB_USER_MODULE_HOSTNAME': 'localhost',
         }
         if config.open_telemetry_enabled:
             common_env_vars['OPENTELEMETRY_ENDPOINT'] = config.open_telemetry_endpoint
 
-        plugin_vars_list = plugin_engine.invoke_plugin_hook(PluginCore.fatman_runtime_env_vars)
+        plugin_vars_list = plugin_engine.invoke_plugin_hook(PluginCore.job_runtime_env_vars)
         for plugin_vars in plugin_vars_list:
             if plugin_vars:
                 common_env_vars = merge_env_vars(common_env_vars, plugin_vars)
@@ -81,10 +81,10 @@ class KubernetesFatmanDeployer(FatmanDeployer):
         runtime_env_vars = merge_env_vars(runtime_env_vars, common_env_vars)
 
         resources = manifest.resources or ResourcesManifest()
-        memory_min = resources.memory_min or config.default_fatman_memory_min
-        memory_max = resources.memory_max or config.default_fatman_memory_max
-        cpu_min = resources.cpu_min or config.default_fatman_cpu_min
-        cpu_max = resources.cpu_max or config.default_fatman_cpu_max
+        memory_min = resources.memory_min or config.default_job_memory_min
+        memory_max = resources.memory_max or config.default_job_memory_max
+        cpu_min = resources.cpu_min or config.default_job_cpu_min
+        cpu_max = resources.cpu_max or config.default_job_cpu_max
         if resources.memory_max is None and memory_max < memory_min:
             memory_max = memory_min
         if resources.cpu_max is None and cpu_max < cpu_min:
@@ -93,8 +93,8 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             memory_min = memory_max / 4
             logger.info(f'minimum memory increased to memory_max/4: {memory_min}')
 
-        assert memory_max <= config.max_fatman_memory_limit, \
-            f'given memory limit {memory_max} is greater than max allowed {config.max_fatman_memory_limit}'
+        assert memory_max <= config.max_job_memory_limit, \
+            f'given memory limit {memory_max} is greater than max allowed {config.max_job_memory_limit}'
         assert memory_min, 'memory_min must be greater than zero'
         assert cpu_min, 'cpu_min must be greater than zero'
         assert memory_min <= memory_max, 'memory_min must be less than memory_max'
@@ -103,31 +103,31 @@ class KubernetesFatmanDeployer(FatmanDeployer):
         render_vars = {
             'resource_name': resource_name,
             'manifest': manifest,
-            'entrypoint_image': get_fatman_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag),
+            'entrypoint_image': get_job_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag),
             'deployment_timestamp': deployment_timestamp,
             'env_vars': runtime_env_vars,
             'memory_min': memory_min,
             'memory_max': memory_max,
             'cpu_min': cpu_min,
             'cpu_max': cpu_max,
-            'fatman_k8s_namespace': K8S_NAMESPACE,
+            'job_k8s_namespace': K8S_NAMESPACE,
         }
         
         container_vars = []  # list of container tuples: (container_name, image_name, container_port)
         for container_index in range(containers_num):
             container_name = get_container_name(resource_name, container_index)
-            image_name = get_fatman_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag, container_index)
+            image_name = get_job_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag, container_index)
             container_port = 7000 + container_index
             container_vars.append((container_name, image_name, container_port))
         render_vars['containers'] = container_vars
 
-        _apply_templated_resource('fatman_template.yaml', render_vars, self.src_dir)
+        _apply_templated_resource('job_template.yaml', render_vars, self.src_dir)
 
         internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
-        return FatmanDto(
+        return JobDto(
             name=manifest.name,
             version=manifest.version,
-            status=FatmanStatus.RUNNING.value,
+            status=JobStatus.RUNNING.value,
             create_time=deployment_timestamp,
             update_time=deployment_timestamp,
             manifest=manifest,
@@ -136,9 +136,9 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             infrastructure_target=self.infrastructure_name,
         )
 
-    def delete_fatman(self, fatman_name: str, fatman_version: str):
+    def delete_job(self, job_name: str, job_version: str):
         k8s_client = self._k8s_api_client()
-        resource_name = fatman_resource_name(fatman_name, fatman_version)
+        resource_name = job_resource_name(job_name, job_version)
 
         apps_api = client.AppsV1Api(k8s_client)
         apps_api.delete_namespaced_deployment(resource_name, namespace=K8S_NAMESPACE)
@@ -168,11 +168,11 @@ class KubernetesFatmanDeployer(FatmanDeployer):
             else:
                 raise e
 
-    def fatman_exists(self, fatman_name: str, fatman_version: str) -> bool:
+    def job_exists(self, job_name: str, job_version: str) -> bool:
         k8s_client = self._k8s_api_client()
         apps_api = client.AppsV1Api(k8s_client)
         try:
-            resource_name = fatman_resource_name(fatman_name, fatman_version)
+            resource_name = job_resource_name(job_name, job_version)
             apps_api.read_namespaced_deployment(resource_name, namespace=K8S_NAMESPACE)
             return True
         except ApiException as e:
@@ -185,38 +185,38 @@ class KubernetesFatmanDeployer(FatmanDeployer):
         load_incluster_config()
         return client.ApiClient()
 
-    def save_fatman_secrets(self,
-                            fatman_name: str,
-                            fatman_version: str,
-                            fatman_secrets: FatmanSecrets,
+    def save_job_secrets(self,
+                            job_name: str,
+                            job_version: str,
+                            job_secrets: JobSecrets,
                             ):
-        """Create or update secrets needed to build and deploy a fatman"""
-        resource_name = fatman_resource_name(fatman_name, fatman_version)
+        """Create or update secrets needed to build and deploy a job"""
+        resource_name = job_resource_name(job_name, job_version)
         render_vars = {
             'resource_name': resource_name,
-            'fatman_name': fatman_name,
-            'fatman_version': fatman_version,
-            'git_credentials': _encode_secret_key(fatman_secrets.git_credentials),
-            'secret_build_env': _encode_secret_key(fatman_secrets.secret_build_env),
-            'secret_runtime_env': _encode_secret_key(fatman_secrets.secret_runtime_env),
-            'fatman_k8s_namespace': K8S_NAMESPACE,
+            'job_name': job_name,
+            'job_version': job_version,
+            'git_credentials': _encode_secret_key(job_secrets.git_credentials),
+            'secret_build_env': _encode_secret_key(job_secrets.secret_build_env),
+            'secret_runtime_env': _encode_secret_key(job_secrets.secret_runtime_env),
+            'job_k8s_namespace': K8S_NAMESPACE,
         }
         _apply_templated_resource('secret_template.yaml', render_vars, self.src_dir)
 
-    def get_fatman_secrets(self,
-                           fatman_name: str,
-                           fatman_version: str,
-                           ) -> FatmanSecrets:
-        """Retrieve secrets for building and deploying a fatman"""
+    def get_job_secrets(self,
+                           job_name: str,
+                           job_version: str,
+                           ) -> JobSecrets:
+        """Retrieve secrets for building and deploying a job"""
         k8s_client = self._k8s_api_client()
         core_api = client.CoreV1Api(k8s_client)
 
-        resource_name = fatman_resource_name(fatman_name, fatman_version)
+        resource_name = job_resource_name(job_name, job_version)
         try:
             secret: V1Secret = core_api.read_namespaced_secret(resource_name, namespace=K8S_NAMESPACE)
         except ApiException as e:
             if e.reason == 'Not Found':
-                raise RuntimeError(f"Can't find secrets associated with fatman {fatman_name} v{fatman_version}")
+                raise RuntimeError(f"Can't find secrets associated with job {job_name} v{job_version}")
             else:
                 raise e
         secret_data: Dict[str, str] = secret.data
@@ -226,7 +226,7 @@ class KubernetesFatmanDeployer(FatmanDeployer):
         git_credentials_dict = _decode_secret_key(secret_data, 'git_credentials')
         git_credentials = parse_dict_datamodel(git_credentials_dict, Credentials) if git_credentials_dict else None
 
-        return FatmanSecrets(
+        return JobSecrets(
             git_credentials=git_credentials,
             secret_build_env=secret_build_env,
             secret_runtime_env=secret_runtime_env,
