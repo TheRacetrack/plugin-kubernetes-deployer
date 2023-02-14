@@ -74,23 +74,23 @@ class KubernetesMonitor(JobMonitor):
             yield job
 
     def check_job_condition(self,
-                               job: JobDto,
-                               deployment_timestamp: int = 0,
-                               on_job_alive: Callable = None,
-                               logs_on_error: bool = True,
-                               ):
+                            job: JobDto,
+                            deployment_timestamp: int = 0,
+                            on_job_alive: Callable = None,
+                            logs_on_error: bool = True,
+                            ):
         try:
             check_until_job_is_operational(self._get_internal_job_url(job),
-                                              deployment_timestamp, on_job_alive)
+                                           deployment_timestamp, on_job_alive)
         except Exception as e:
             if logs_on_error:
                 try:
                     logs = self.read_recent_logs(job)
                 except (AssertionError, ApiException, CommandError):
-                    raise RuntimeError(str(e))
-                raise RuntimeError(f'{e}\nJob logs:\n{logs}')
+                    raise RuntimeError(str(e)) from e
+                raise RuntimeError(f'{e}\nJob logs:\n{logs}') from e
             else:
-                raise RuntimeError(str(e))
+                raise RuntimeError(str(e)) from e
 
     def read_recent_logs(self, job: JobDto, tail: int = 20) -> str:
         resource_name = job_resource_name(job.name, job.version)
