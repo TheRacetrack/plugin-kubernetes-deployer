@@ -52,7 +52,7 @@ class KubernetesMonitor(JobMonitor):
             start_timestamp = datetime_to_timestamp(recent_pod.metadata.creation_timestamp)
             internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
 
-            replica_internal_names = []
+            replica_internal_names: list[str] = []
             for pod in pods:
                 pod_status: V1PodStatus = pod.status
                 pod_ip_dns: str = pod_status.pod_ip.replace('.', '-')
