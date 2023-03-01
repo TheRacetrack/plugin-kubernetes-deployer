@@ -1,8 +1,9 @@
+from __future__ import annotations
+from collections import defaultdict
 import os
-from typing import List, Dict
 
 from kubernetes import client
-from kubernetes.client import V1ObjectMeta, V1Pod, V1Deployment
+from kubernetes.client import V1ObjectMeta, V1Pod, V1Deployment, V1PodStatus
 from kubernetes.config import load_incluster_config
 
 K8S_NAMESPACE = os.environ.get('JOB_K8S_NAMESPACE', 'racetrack')
@@ -16,17 +17,16 @@ def k8s_api_client() -> client.ApiClient:
     return client.ApiClient()
 
 
-def get_recent_job_pod(pods: List[V1Pod]) -> str:
+def get_recent_job_pod(pods: list[V1Pod]) -> V1Pod:
     """If many pods are found, return the latest alive pod"""
     assert pods, 'no pod found with expected job label'
     pods_alive = [pod for pod in pods if pod.metadata.deletion_timestamp is None]  # ignore Terminating pods
     assert pods_alive, 'no alive pod found with expected job label'
     recent_pod = sorted(pods_alive, key=lambda pod: pod.metadata.creation_timestamp)[-1]
-    metadata: V1ObjectMeta = recent_pod.metadata
-    return metadata.name
+    return recent_pod
 
 
-def get_job_pod_names(pods: List[V1Pod]) -> List[str]:
+def get_job_pod_names(pods: list[V1Pod]) -> list[str]:
     """Get alive job pods names"""
     assert pods, 'empty pods list'
     pods_alive = [pod for pod in pods if pod.metadata.deletion_timestamp is None]  # ignore Terminating pods
@@ -34,12 +34,12 @@ def get_job_pod_names(pods: List[V1Pod]) -> List[str]:
     return [pod.metadata.name for pod in pods_alive]
 
 
-def get_job_deployments(apps_api: client.AppsV1Api) -> Dict[str, V1Deployment]:
+def get_job_deployments(apps_api: client.AppsV1Api) -> dict[str, V1Deployment]:
     job_deployments = {}
     _continue = None  # pointer to the query in case of multiple pages
     while True:
         ret = apps_api.list_namespaced_deployment(K8S_NAMESPACE, limit=100, _continue=_continue)
-        deployments: List[V1Deployment] = ret.items
+        deployments: list[V1Deployment] = ret.items
 
         for deployment in deployments:
             metadata: V1ObjectMeta = deployment.metadata
@@ -54,12 +54,13 @@ def get_job_deployments(apps_api: client.AppsV1Api) -> Dict[str, V1Deployment]:
     return job_deployments
 
 
-def get_job_pods(core_api: client.CoreV1Api) -> Dict[str, V1Pod]:
-    job_pods = {}
+def get_job_pods(core_api: client.CoreV1Api) -> dict[str, list[V1Pod]]:
+    """Return mapping: resource name (job_name & job_version) -> list of pods"""
+    job_pods = defaultdict(list)
     _continue = None  # pointer to the query in case of multiple pages
     while True:
         ret = core_api.list_namespaced_pod(K8S_NAMESPACE, limit=100, _continue=_continue)
-        pods: List[V1Pod] = ret.items
+        pods: list[V1Pod] = ret.items
 
         for pod in pods:
             metadata: V1ObjectMeta = pod.metadata
@@ -71,7 +72,7 @@ def get_job_pods(core_api: client.CoreV1Api) -> Dict[str, V1Pod]:
 
             if K8S_JOB_RESOURCE_LABEL in metadata.labels:
                 name = metadata.labels[K8S_JOB_RESOURCE_LABEL]
-                job_pods[name] = pod
+                job_pods[name].append(pod)
 
         _continue = ret.metadata._continue
         if _continue is None:
