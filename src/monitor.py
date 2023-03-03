@@ -1,7 +1,7 @@
 from typing import Callable, Iterable
 
 from kubernetes import client
-from kubernetes.client import V1ObjectMeta, ApiException
+from kubernetes.client import V1ObjectMeta, V1PodStatus, ApiException
 
 from lifecycle.config import Config
 from lifecycle.monitor.base import JobMonitor
@@ -15,7 +15,7 @@ from racetrack_commons.deploy.resource import job_resource_name
 from racetrack_commons.entities.dto import JobDto, JobStatus
 from racetrack_client.log.logs import get_logger
 
-from utils import k8s_api_client, K8S_JOB_NAME_LABEL, K8S_JOB_VERSION_LABEL, \
+from utils import get_recent_job_pod, k8s_api_client, K8S_JOB_NAME_LABEL, K8S_JOB_VERSION_LABEL, \
     K8S_NAMESPACE, K8S_JOB_RESOURCE_LABEL, get_job_deployments, get_job_pods
 
 logger = get_logger(__name__)
@@ -35,21 +35,31 @@ class KubernetesMonitor(JobMonitor):
 
         with wrap_context('listing Kubernetes API'):
             deployments = get_job_deployments(apps_api)
-            pods = get_job_pods(core_api)
+            pods_by_job = get_job_pods(core_api)
 
         for resource_name, deployment in deployments.items():
-            pod = pods.get(resource_name)
-            if pod is None:
+            pods = pods_by_job.get(resource_name)
+            if pods is None or len(pods) == 0:
                 continue
 
-            metadata: V1ObjectMeta = pod.metadata
+            recent_pod = get_recent_job_pod(pods)
+            metadata: V1ObjectMeta = recent_pod.metadata
             job_name = metadata.labels.get(K8S_JOB_NAME_LABEL)
             job_version = metadata.labels.get(K8S_JOB_VERSION_LABEL)
             if not (job_name and job_version):
                 continue
 
-            start_timestamp = datetime_to_timestamp(pod.metadata.creation_timestamp)
+            start_timestamp = datetime_to_timestamp(recent_pod.metadata.creation_timestamp)
             internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
+
+            replica_internal_names: list[str] = []
+            for pod in pods:
+                pod_status: V1PodStatus = pod.status
+                pod_ip_dns: str = pod_status.pod_ip.replace('.', '-')
+                replica_internal_names.append(
+                    f'{pod_ip_dns}.{resource_name}.{K8S_NAMESPACE}.svc:7000'
+                )
+
             job = JobDto(
                 name=job_name,
                 version=job_version,
@@ -60,6 +70,7 @@ class KubernetesMonitor(JobMonitor):
                 internal_name=internal_name,
                 error=None,
                 infrastructure_target=self.infrastructure_name,
+                replica_internal_names=replica_internal_names,
             )
             try:
                 job_url = self._get_internal_job_url(job)
