@@ -103,7 +103,6 @@ class KubernetesJobDeployer(JobDeployer):
         render_vars = {
             'resource_name': resource_name,
             'manifest': manifest,
-            'entrypoint_image': get_job_image(config.docker_registry, config.docker_registry_namespace, manifest.name, tag),
             'deployment_timestamp': deployment_timestamp,
             'env_vars': runtime_env_vars,
             'memory_min': memory_min,
