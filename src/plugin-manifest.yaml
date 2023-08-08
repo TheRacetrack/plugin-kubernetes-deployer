@@ -1,3 +1,6 @@
 name: kubernetes-infrastructure
-version: 1.2.2
+version: 1.2.3
 url: https://github.com/TheRacetrack/plugin-kubernetes-infrastructure
+category: 'infrastructure'
+components:
+  - 'lifecycle'

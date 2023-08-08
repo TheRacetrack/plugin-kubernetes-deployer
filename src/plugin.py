@@ -1,14 +1,12 @@
 from __future__ import annotations
-import sys
 from typing import Any
 
 from racetrack_client.log.logs import get_logger
+from lifecycle.deployer.infra_target import InfrastructureTarget
 
-if 'lifecycle' in sys.modules:
-    from lifecycle.deployer.infra_target import InfrastructureTarget
-    from deployer import KubernetesJobDeployer
-    from monitor import KubernetesMonitor
-    from logs_streamer import KubernetesLogsStreamer
+from deployer import KubernetesJobDeployer
+from monitor import KubernetesMonitor
+from logs_streamer import KubernetesLogsStreamer
 
 logger = get_logger(__name__)
 
