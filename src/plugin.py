@@ -1,8 +1,7 @@
-from __future__ import annotations
 from typing import Any
 
 from racetrack_client.log.logs import get_logger
-from lifecycle.deployer.infra_target import InfrastructureTarget
+from lifecycle.infrastructure.model import InfrastructureTarget
 
 from deployer import KubernetesJobDeployer
 from monitor import KubernetesMonitor
@@ -16,7 +15,7 @@ class Plugin:
     def infrastructure_targets(self) -> dict[str, Any]:
         """
         Infrastructure Targets (deployment targets) for Job provided by this plugin
-        :return dict of infrastructure name -> an instance of lifecycle.deployer.infra_target.InfrastructureTarget
+        :return dict of infrastructure name -> an instance of InfrastructureTarget
         """
         return {
             'kubernetes': InfrastructureTarget(
