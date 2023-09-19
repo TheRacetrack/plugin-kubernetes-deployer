@@ -55,10 +55,12 @@ class KubernetesMonitor(JobMonitor):
             replica_internal_names: list[str] = []
             for pod in pods:
                 pod_status: V1PodStatus = pod.status
-                pod_ip_dns: str = pod_status.pod_ip.replace('.', '-')
-                replica_internal_names.append(
-                    f'{pod_ip_dns}.{resource_name}.{K8S_NAMESPACE}.svc:7000'
-                )
+                if pod_status.pod_ip:
+                    pod_ip_dns: str = pod_status.pod_ip.replace('.', '-')
+                    replica_internal_names.append(
+                        f'{pod_ip_dns}.{resource_name}.{K8S_NAMESPACE}.svc:7000'
+                    )
+            replica_internal_names.sort()
 
             job = JobDto(
                 name=job_name,
