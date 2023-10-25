@@ -80,19 +80,3 @@ spec:
     - name: http
       port: 7000
       targetPort: 7000
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  namespace: {{ job_k8s_namespace }}
-  name: {{ resource_name }}
-  labels:
-    app: {{ resource_name }}
-spec:
-  namespaceSelector:
-    any: true
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: {{ resource_name }}
-  endpoints:
-  - port: http
