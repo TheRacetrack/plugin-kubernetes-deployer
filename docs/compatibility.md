@@ -4,3 +4,4 @@ This document describes compatibility of the versions of this plugin with the Ra
 | Plugin version | Compatible Racetrack version |
 |----------------|------------------------------|
 | 1.3.0          | `> 2.20.0`                   |
+| 1.3.2          | `> 2.23.0`                   |
