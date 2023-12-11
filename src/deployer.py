@@ -52,6 +52,7 @@ class KubernetesJobDeployer(JobDeployer):
         runtime_env_vars: Dict[str, str],
         family: JobFamilyDto,
         containers_num: int = 1,
+        runtime_secret_vars: Dict[str, str] | None = None,
     ) -> JobDto:
         """Deploy Job on Kubernetes and expose Service accessible by Job name"""
         resource_name = job_resource_name(manifest.name, manifest.version)
@@ -110,6 +111,7 @@ class KubernetesJobDeployer(JobDeployer):
             'cpu_min': cpu_min,
             'cpu_max': cpu_max,
             'job_k8s_namespace': K8S_NAMESPACE,
+            'runtime_secret_vars': runtime_secret_vars or {},
         }
         
         container_vars = []  # list of container tuples: (container_name, image_name, container_port)
@@ -184,13 +186,17 @@ class KubernetesJobDeployer(JobDeployer):
         load_incluster_config()
         return client.ApiClient()
 
-    def save_job_secrets(self,
-                            job_name: str,
-                            job_version: str,
-                            job_secrets: JobSecrets,
-                            ):
+    def save_job_secrets(
+        self,
+        job_name: str,
+        job_version: str,
+        job_secrets: JobSecrets,
+    ):
         """Create or update secrets needed to build and deploy a job"""
         resource_name = job_resource_name(job_name, job_version)
+        encoded_runtime_vars = {}
+        for var_name, var_value in job_secrets.secret_runtime_env.items():
+            encoded_runtime_vars[var_name] = _encode_secret_string(var_value)
         render_vars = {
             'resource_name': resource_name,
             'job_name': job_name,
@@ -199,13 +205,15 @@ class KubernetesJobDeployer(JobDeployer):
             'secret_build_env': _encode_secret_key(job_secrets.secret_build_env),
             'secret_runtime_env': _encode_secret_key(job_secrets.secret_runtime_env),
             'job_k8s_namespace': K8S_NAMESPACE,
+            'encoded_runtime_vars': encoded_runtime_vars,
         }
         _apply_templated_resource('secret_template.yaml', render_vars, self.src_dir)
 
-    def get_job_secrets(self,
-                           job_name: str,
-                           job_version: str,
-                           ) -> JobSecrets:
+    def get_job_secrets(
+        self,
+        job_name: str,
+        job_version: str,
+    ) -> JobSecrets:
         """Retrieve secrets for building and deploying a job"""
         k8s_client = self._k8s_api_client()
         core_api = client.CoreV1Api(k8s_client)
@@ -273,6 +281,10 @@ def _decode_secret_key(secret_data: Dict[str, str], key: str) -> Optional[Any]:
     decoded_json: str = b64decode(encoded.encode()).decode()
     decoded_obj = json.loads(decoded_json)
     return decoded_obj
+
+
+def _encode_secret_string(text: str) -> str:
+    return b64encode(text.encode()).decode()
 
 
 def get_container_name(resource_name: str, container_index: int) -> str:
