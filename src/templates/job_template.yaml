@@ -58,6 +58,13 @@ spec:
             - name: {{ env_key }}
               value: "{{ env_value }}"
 {% endfor %}
+{% for secret_key in runtime_secret_vars.keys() %}
+            - name: {{ secret_key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ resource_name }}
+                  key: secret_runtime_env.{{ secret_key }}
+{% endfor %}
 {% endfor %}
 
 ---
