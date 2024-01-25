@@ -34,6 +34,18 @@ spec:
         runAsGroup: 100000
       imagePullSecrets:
         - name: docker-registry-read-secret
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: "app.kubernetes.io/name"
+                      operator: In
+                      values:
+                        - {{ resource_name }}
+                topologyKey: kubernetes.io/hostname
       containers:
 {% for container_name, image_name, container_port in containers %}
         - name: {{ container_name }}
