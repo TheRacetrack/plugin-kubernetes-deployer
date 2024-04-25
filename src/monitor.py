@@ -1,3 +1,6 @@
+import json
+import backoff
+
 from typing import Callable, Iterable
 
 from kubernetes import client
@@ -93,6 +96,7 @@ class KubernetesMonitor(JobMonitor):
                             logs_on_error: bool = True,
                             ):
         try:
+            self.check_k8s_events_for_errors(job_resource_name(job.name, job.version))
             check_until_job_is_operational(self._get_internal_job_url(job),
                                            deployment_timestamp, on_job_alive)
         except Exception as e:
@@ -115,3 +119,63 @@ class KubernetesMonitor(JobMonitor):
 
     def _get_internal_job_url(self, job: JobDto) -> str:
         return f'http://{job.internal_name}'
+
+    @backoff.on_exception(backoff.fibo, RuntimeError, max_value=2, max_time=10, jitter=None, logger=None)
+    def check_k8s_events_for_errors(self, resource_name: str):
+        # First, query relevant deployment events
+        base_cmd = f'kubectl get events --namespace {K8S_NAMESPACE} --sort-by=\'.metadata.creationTimestamp\' -o json'
+        deployment_selectors = f'--field-selector involvedObject.kind=Deployment,involvedObject.name={resource_name}'
+        deployment_query = json.loads(shell_output(f'{base_cmd} {deployment_selectors}'))
+
+        # From the deployment query, we extract the relevant ReplicaSet names
+        replicaset_names = self.get_replicaset_names_from_deployment_query(deployment_query, resource_name)
+
+        # Query for all the ReplicaSets
+        replicaset_queries = [
+            json.loads(shell_output(f'{base_cmd} --field-selector involvedObject.kind=ReplicaSet,involvedObject.name={name}'))
+            for name in replicaset_names
+        ]
+
+        # From the ReplicaSet queries, we get the relevant Pod names
+        pod_names = self.get_pod_names_from_replicaset_queries(replicaset_queries, resource_name)
+
+        # Query for all the Pods
+        pod_queries = [
+            json.loads(shell_output(f'{base_cmd} --field-selector involvedObject.kind=Pod,involvedObject.name={pod_name}'))
+            for pod_name in pod_names
+        ]
+
+        # Then, we check the pod queries for errors.
+        things_we_dont_want_in_messages = ['Insufficient cpu']
+        things_we_dont_want_in_reasons = ['FailedScheduling']
+        for pod_query in pod_queries:
+            for event in pod_query.get('items', []):
+                for thing in things_we_dont_want_in_messages:
+                    if thing in event['message']:
+                        raise(RuntimeError(f'Kubernets event error: {str(event)}'))
+                for thing in things_we_dont_want_in_reasons:
+                    if thing in event['reason']:
+                        raise(RuntimeError(f'Kubernets event error: {str(event)}'))
+
+
+    def get_replicaset_names_from_deployment_query(self, deployment_query, resource_name):
+        # We only look at the latest event from the query, hence the [-1]
+        # There should only be one ReplicaSet per deployment
+        deployment_messages = [event['message'] for event in [deployment_query.get('items', [])[-1]]]
+        replicaset_names = [
+            self.get_first_word_starting_with(message, resource_name)
+            for message in deployment_messages
+        ]
+
+        return set(replicaset_names)
+
+    def get_pod_names_from_replicaset_queries(self, replicaset_queries, resource_name):
+        pod_names = [
+            self.get_first_word_starting_with(message, resource_name)
+            for replicaset_query in replicaset_queries
+            for message in [event['message'] for event in replicaset_query.get('items', [])]
+        ]
+        return pod_names
+
+    def get_first_word_starting_with(self, string_of_words, starting_with):
+        return next(word for word in string_of_words.split() if word.startswith(f'{starting_with}-'))
