@@ -151,10 +151,10 @@ class KubernetesMonitor(JobMonitor):
         for pod_query in pod_queries:
             for event in pod_query.get('items', []):
                 for thing in things_we_dont_want_in_messages:
-                    if thing in event['message']:
+                    if thing in event['message'] and event['type'] == 'Warning':
                         raise(RuntimeError(f'Kubernets event error: {str(event)}'))
                 for thing in things_we_dont_want_in_reasons:
-                    if thing in event['reason']:
+                    if thing in event['reason'] and event['type'] == 'Warning':
                         raise(RuntimeError(f'Kubernets event error: {str(event)}'))
 
 
