@@ -122,8 +122,11 @@ class KubernetesMonitor(JobMonitor):
 
     @backoff.on_exception(backoff.fibo, RuntimeError, max_value=2, max_time=10, jitter=None, logger=None)
     def check_k8s_events_for_errors(self, resource_name: str):
-        # First, query relevant deployment events
-        base_cmd = f'kubectl get events --namespace {K8S_NAMESPACE} --sort-by=\'.metadata.creationTimestamp\' -o json'
+        # First, query relevant Deployment events based on resource_name, e.g. "job-adder-v-0-0-2"
+        base_cmd = (f'kubectl get events '
+                    f'--namespace {K8S_NAMESPACE} '
+                    f'--sort-by=\'.metadata.creationTimestamp\' '
+                    f'-o json' )
         deployment_selectors = f'--field-selector involvedObject.kind=Deployment,involvedObject.name={resource_name}'
         deployment_query = json.loads(shell_output(f'{base_cmd} {deployment_selectors}'))
 
@@ -146,21 +149,21 @@ class KubernetesMonitor(JobMonitor):
         ]
 
         # Then, we check the pod queries for errors.
-        things_we_dont_want_in_messages = ['Insufficient cpu']
-        things_we_dont_want_in_reasons = ['FailedScheduling']
+        errors_we_dont_want_in_messages = ['Insufficient cpu']
+        errors_we_dont_want_in_reasons = ['FailedScheduling']
         for pod_query in pod_queries:
             for event in pod_query.get('items', []):
-                for thing in things_we_dont_want_in_messages:
-                    if thing in event['message'] and event['type'] == 'Warning':
+                for error in errors_we_dont_want_in_messages:
+                    if error in event['message'] and event['type'] == 'Warning':
                         raise(RuntimeError(f'Kubernets event error: {str(event)}'))
-                for thing in things_we_dont_want_in_reasons:
-                    if thing in event['reason'] and event['type'] == 'Warning':
+                for error in errors_we_dont_want_in_reasons:
+                    if error in event['reason'] and event['type'] == 'Warning':
                         raise(RuntimeError(f'Kubernets event error: {str(event)}'))
 
 
     def get_replicaset_names_from_deployment_query(self, deployment_query, resource_name):
+        # Assumes events in the query are sorted from oldest to newest, so the latest one should be last element
         # We only look at the latest event from the query, hence the [-1]
-        # There should only be one ReplicaSet per deployment
         deployment_messages = [event['message'] for event in [deployment_query.get('items', [])[-1]]]
         replicaset_names = [
             self.get_first_word_starting_with(message, resource_name)
