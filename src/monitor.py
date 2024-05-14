@@ -200,10 +200,10 @@ class KubernetesMonitor(JobMonitor):
         # TODO: A single "kubectl get events" command could be used to get all the events at once, but this is easier to reason about
 
         # First, query relevant Deployment events based on resource_name, e.g. "job-adder-v-0-0-2"
-        base_cmd = (f'kubectl get events '
-                    f'--namespace {K8S_NAMESPACE} '
-                    f'--sort-by=\'.metadata.creationTimestamp\' '
-                    f'-o json' )
+        base_cmd = f'kubectl get events '
+                   f'--namespace {K8S_NAMESPACE} '
+                   f'--sort-by=\'.metadata.creationTimestamp\' '
+                   f'-o json' 
         deployment_selectors = f'--field-selector involvedObject.kind=Deployment,involvedObject.name={resource_name}'
         deployment_query = json.loads(shell_output(f'{base_cmd} {deployment_selectors}'))
 
