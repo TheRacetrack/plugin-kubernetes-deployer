@@ -1,7 +1,8 @@
 import json
 import backoff
+import time
 
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Any
 
 from kubernetes import client
 from kubernetes.client import V1ObjectMeta, V1PodStatus, ApiException
@@ -96,7 +97,7 @@ class KubernetesMonitor(JobMonitor):
                             logs_on_error: bool = True,
                             ):
         try:
-            self.check_k8s_events_for_errors(job_resource_name(job.name, job.version))
+            self.check_deployment_for_early_errors(job_resource_name(job.name, job.version))
             check_until_job_is_operational(self._get_internal_job_url(job),
                                            deployment_timestamp, on_job_alive)
         except Exception as e:
@@ -120,8 +121,85 @@ class KubernetesMonitor(JobMonitor):
     def _get_internal_job_url(self, job: JobDto) -> str:
         return f'http://{job.internal_name}'
 
-    @backoff.on_exception(backoff.fibo, RuntimeError, max_value=2, max_time=10, jitter=None, logger=None)
-    def check_k8s_events_for_errors(self, resource_name: str):
+
+    def check_deployment_for_early_errors(self, resource_name: str):
+        """
+        Check for indicators of early errors in the deployment
+        If errors were found, raises an error
+        If no errors were found, returns
+        If unsure, continues checking until timeout, then returns
+        """
+        # There is not a single way to determine if a deployment has failed early, so we combine multiple types of checks,
+        # and require that consecutive checks agree the deployment has failed or passed.
+        # A "check" return True on deployment success, False on deployment failure, and None if unsure.
+        # The timeouts, number of checks, and loop_sleeps are mostly based on heuristics and vibes:
+        #   We don't want to spam the cluster with requests
+        #   But we also do not want the deployment to take much longer
+        # If the deployment just works, it will be delayed by O(n_consecutive_checks * total_loop_time)
+        # TODO: If we are really confident in 'kubectl rollout status' we could spawn it in a separate thread and wait for it to finish with a watch='true'
+        n_consecutive_checks = 3
+        checks: list[None | bool] = [None] * n_consecutive_checks
+        loop_sleep_time = 8
+        start_time = time.time()
+        timeout = start_time + 10 * 60 # (n_minutes * seconds/minute) - we experienced a deploy failing after 8 minutes.
+        i = 0
+        now = time.time()
+        while now < timeout:
+            is_rollout_okay, rollout_status = self.check_rollout_status(resource_name)
+            is_event_okay, events = self.check_k8s_events_for_errors(resource_name)
+            checks[i] = self.combine_checks(is_rollout_okay, is_event_okay)
+
+            i = (i + 1) % n_consecutive_checks
+            now = time.time()
+
+            if None in checks:
+                time.sleep(loop_sleep_time)
+                continue
+
+            if all(checks):
+                return
+
+            if not any(checks):
+                error_msg = f'{n_consecutive_checks} consecutive early errors detected in {resource_name}. Rollout status: {rollout_status}. Kubernetes events: {events}'
+                raise RuntimeError(error_msg)
+            time.sleep(loop_sleep_time)
+
+
+    def combine_checks(self, is_rollout_okay: bool | None, is_event_okay: bool | None) -> bool | None:
+        # If is_rollout_okay is None, then we trust is_event_okay instead
+        # If is_event_okay is None, then we trust is_rollout_okay instead
+        # If neither are None, we need both of them to say that the deployment went well
+        if is_event_okay is None:
+            return is_rollout_okay
+        if is_rollout_okay is None:
+            return is_event_okay
+        return is_rollout_okay and is_event_okay
+
+
+    def check_rollout_status(self, resource_name: str, watch: str = 'false') -> tuple[bool | None, str]:
+        # Some possible outputs:
+        # https://github.com/kubernetes/kubernetes/blob/f1d63237edf908aae577d3da60276151c18ffee0/staging/src/k8s.io/kubectl/pkg/polymorphichelpers/rollout_status.go#L89
+        successful_rollouts_messages =[
+            f'deployment \"{resource_name}\" successfully rolled out',
+            ]
+        failure_rollouts_messages = [
+            f'deployment \"{resource_name}\" exceeded its progress deadline'
+        ]
+
+        cmd = f'kubectl rollout status deployment/{resource_name} --watch={watch} --namespace {K8S_NAMESPACE} --revision=0'
+        rollout_status = shell_output(cmd)
+
+        if any(msg in rollout_status for msg in successful_rollouts_messages):
+            return True, rollout_status
+        if any(msg in rollout_status for msg in failure_rollouts_messages):
+            return False, rollout_status
+        return None, rollout_status
+
+
+    def check_k8s_events_for_errors(self, resource_name: str) -> tuple[bool | None, str]:
+        # TODO: Maybe use the python k8s client instead of shell commands
+        # TODO: A single "kubectl get events" command could be used to get all the events at once, but this is easier to reason about
+
         # First, query relevant Deployment events based on resource_name, e.g. "job-adder-v-0-0-2"
         base_cmd = (f'kubectl get events '
                     f'--namespace {K8S_NAMESPACE} '
@@ -149,36 +227,40 @@ class KubernetesMonitor(JobMonitor):
         ]
 
         # Then, we check the pod queries for errors.
-        errors_we_dont_want_in_messages = ['Insufficient cpu']
-        errors_we_dont_want_in_reasons = ['FailedScheduling']
+        # only look for reasons
+        errors_we_dont_want_in_messages = ['Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage']
+        errors_we_dont_want_in_reasons = ['FailedScheduling', 'SchedulerError', 'CrashLoopBackOff']
         for pod_query in pod_queries:
             for event in pod_query.get('items', []):
                 for error in errors_we_dont_want_in_messages:
                     if error in event['message'] and event['type'] == 'Warning':
-                        raise(RuntimeError(f'Kubernets event error: {str(event)}'))
+                        return False, event
                 for error in errors_we_dont_want_in_reasons:
                     if error in event['reason'] and event['type'] == 'Warning':
-                        raise(RuntimeError(f'Kubernets event error: {str(event)}'))
+                        return False, event
+        return None, "Events regarding deployments are inconclusive"
 
 
-    def get_replicaset_names_from_deployment_query(self, deployment_query, resource_name):
+    def get_replicaset_names_from_deployment_query(self, deployment_query: dict[str, Any], resource_name: str) -> set[str]:
         # Assumes events in the query are sorted from oldest to newest, so the latest one should be last element
         # We only look at the latest event from the query, hence the [-1]
         deployment_messages = [event['message'] for event in [deployment_query.get('items', [])[-1]]]
         replicaset_names = [
-            self.get_first_word_starting_with(message, resource_name)
+            self.get_first_word_starting_with(message, f'{resource_name}-') # e.g. "job-adder-v-0-0-2-". note the trailing dash
             for message in deployment_messages
         ]
 
         return set(replicaset_names)
 
-    def get_pod_names_from_replicaset_queries(self, replicaset_queries, resource_name):
+
+    def get_pod_names_from_replicaset_queries(self, replicaset_queries: list[dict[str, Any]], resource_name: str) -> list[str]:
         pod_names = [
-            self.get_first_word_starting_with(message, resource_name)
+            self.get_first_word_starting_with(message, f'{resource_name}-')
             for replicaset_query in replicaset_queries
             for message in [event['message'] for event in replicaset_query.get('items', [])]
         ]
         return pod_names
 
-    def get_first_word_starting_with(self, string_of_words, starting_with):
-        return next(word for word in string_of_words.split() if word.startswith(f'{starting_with}-'))
+
+    def get_first_word_starting_with(self, string_of_words: str, starting_with: str) -> str:
+        return next(word for word in string_of_words.split() if word.startswith(starting_with))
