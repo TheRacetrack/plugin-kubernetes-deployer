@@ -136,43 +136,33 @@ class KubernetesMonitor(JobMonitor):
         #   But we also do not want the deployment to take much longer
         # If the deployment just works, it will be delayed by O(n_consecutive_checks * total_loop_time)
         # TODO: If we are really confident in 'kubectl rollout status' we could spawn it in a separate thread and wait for it to finish with a watch='true'
-        n_consecutive_checks = 3
-        checks: list[None | bool] = [None] * n_consecutive_checks
         loop_sleep_time = 8
         start_time = time.time()
         timeout = start_time + 10 * 60 # (n_minutes * seconds/minute) - we experienced a deploy failing after 8 minutes.
-        i = 0
         now = time.time()
+        failed = False
         while now < timeout:
             is_rollout_okay, rollout_status = self.check_rollout_status(resource_name)
             is_event_okay, events = self.check_k8s_events_for_errors(resource_name)
-            checks[i] = self.combine_checks(is_rollout_okay, is_event_okay)
 
-            i = (i + 1) % n_consecutive_checks
-            now = time.time()
-
-            if None in checks:
-                time.sleep(loop_sleep_time)
-                continue
-
-            if all(checks):
+            if is_rollout_okay or is_event_okay:
+                logger.info(f'Deployment looks good for {resource_name} after {time.time() - start_time:.2f} seconds')
                 return
 
-            if not any(checks):
-                error_msg = f'{n_consecutive_checks} consecutive early errors detected in {resource_name}. Rollout status: {rollout_status}. Kubernetes events: {events}'
+            if is_rollout_okay is not None:
+                if not is_rollout_okay:
+                    failed = True
+
+            if is_event_okay is not None:
+                if not is_event_okay:
+                    failed = True
+
+            if failed:
+                error_msg = f'Early errors detected in {resource_name}. Rollout status: {rollout_status}. Kubernetes events: {events}'
                 raise RuntimeError(error_msg)
+
+
             time.sleep(loop_sleep_time)
-
-
-    def combine_checks(self, is_rollout_okay: bool | None, is_event_okay: bool | None) -> bool | None:
-        # If is_rollout_okay is None, then we trust is_event_okay instead
-        # If is_event_okay is None, then we trust is_rollout_okay instead
-        # If neither are None, we need both of them to say that the deployment went well
-        if is_event_okay is None:
-            return is_rollout_okay
-        if is_rollout_okay is None:
-            return is_event_okay
-        return is_rollout_okay and is_event_okay
 
 
     def check_rollout_status(self, resource_name: str, watch: str = 'false') -> tuple[bool | None, str]:
@@ -185,7 +175,7 @@ class KubernetesMonitor(JobMonitor):
             f'deployment \"{resource_name}\" exceeded its progress deadline'
         ]
 
-        cmd = f'kubectl rollout status deployment/{resource_name} --watch={watch} --namespace {K8S_NAMESPACE} --revision=0'
+        cmd = f'kubectl rollout status deployment/{resource_name} --watch={watch} --namespace {K8S_NAMESPACE}'
         rollout_status = shell_output(cmd)
 
         if any(msg in rollout_status for msg in successful_rollouts_messages):
@@ -196,14 +186,13 @@ class KubernetesMonitor(JobMonitor):
 
 
     def check_k8s_events_for_errors(self, resource_name: str) -> tuple[bool | None, str]:
-        # TODO: Maybe use the python k8s client instead of shell commands
         # TODO: A single "kubectl get events" command could be used to get all the events at once, but this is easier to reason about
 
         # First, query relevant Deployment events based on resource_name, e.g. "job-adder-v-0-0-2"
-        base_cmd = f'kubectl get events '
-                   f'--namespace {K8S_NAMESPACE} '
-                   f'--sort-by=\'.metadata.creationTimestamp\' '
-                   f'-o json' 
+        base_cmd = f'kubectl get events ' + \
+            f'--namespace {K8S_NAMESPACE} ' + \
+            f'--sort-by=\'.metadata.creationTimestamp\' ' + \
+            f'-o json'
         deployment_selectors = f'--field-selector involvedObject.kind=Deployment,involvedObject.name={resource_name}'
         deployment_query = json.loads(shell_output(f'{base_cmd} {deployment_selectors}'))
 
