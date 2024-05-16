@@ -262,6 +262,6 @@ class KubernetesMonitor(JobMonitor):
 
 
     def get_first_word_with(self, string_of_words: str, starting_with: str) -> str:
-        word = next((word for word in string_of_words.split() if starting_with in word))
+        word = next((word for word in string_of_words.split() if starting_with in word), '')
         word = word.replace('"', '') # Sometimes the word is surrounded by double quotes, which is not standard
         return word
