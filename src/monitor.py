@@ -128,13 +128,11 @@ class KubernetesMonitor(JobMonitor):
         If no errors were found, returns
         If unsure, continues checking until timeout, then returns
         """
-        # There is not a single way to determine if a deployment has failed early, so we combine multiple types of checks,
-        # and require that consecutive checks agree the deployment has failed or passed.
-        # A "check" return True on deployment success, False on deployment failure, and None if unsure.
+        # There is not a singular way to determine if a deployment has failed early, so we combine multiple types of checks,
+        # A "check" returns True on deployment success, False on deployment failure, and None if unsure.
         # The timeouts, number of checks, and loop_sleeps are mostly based on heuristics and vibes:
         #   We don't want to spam the cluster with requests
         #   But we also do not want the deployment to take much longer
-        # If the deployment just works, it will be delayed by O(n_consecutive_checks * total_loop_time)
         # TODO: If we are really confident in 'kubectl rollout status' we could spawn it in a separate thread and wait for it to finish with a watch='true'
         loop_sleep_time = 8
         start_time = time.time()
@@ -143,10 +141,10 @@ class KubernetesMonitor(JobMonitor):
         failed = False
         while now < timeout:
             is_rollout_okay, rollout_status = self.check_rollout_status(resource_name)
-            is_event_okay, events = self.check_k8s_events_for_errors(resource_name)
+            is_event_okay, events = self.check_events(resource_name)
 
             if is_rollout_okay or is_event_okay:
-                logger.info(f'Deployment looks good for {resource_name} after {time.time() - start_time:.2f} seconds')
+                logger.info(f'Deployment looks good for {resource_name} after {now - start_time:.2f} seconds')
                 return
 
             if is_rollout_okay is not None:
@@ -161,8 +159,8 @@ class KubernetesMonitor(JobMonitor):
                 error_msg = f'Early errors detected in {resource_name}. Rollout status: {rollout_status}. Kubernetes events: {events}'
                 raise RuntimeError(error_msg)
 
-
             time.sleep(loop_sleep_time)
+            now = time.time()
 
 
     def check_rollout_status(self, resource_name: str, watch: str = 'false') -> tuple[bool | None, str]:
@@ -185,7 +183,7 @@ class KubernetesMonitor(JobMonitor):
         return None, rollout_status
 
 
-    def check_k8s_events_for_errors(self, resource_name: str) -> tuple[bool | None, str]:
+    def check_events(self, resource_name: str) -> tuple[bool | None, str]:
         # TODO: A single "kubectl get events" command could be used to get all the events at once, but this is easier to reason about
 
         # First, query relevant Deployment events based on resource_name, e.g. "job-adder-v-0-0-2"
@@ -205,6 +203,12 @@ class KubernetesMonitor(JobMonitor):
             for name in replicaset_names
         ]
 
+        errors_we_dont_want_in_messages = ['Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage']
+        errors_we_dont_want_in_reasons = ['FailedScheduling', 'SchedulerError', 'CrashLoopBackOff', 'FailedCreate']
+        status, msg = self.check_queries_for_errors(replicaset_queries, errors_we_dont_want_in_messages, errors_we_dont_want_in_reasons)
+        if status is not None:
+            return status, msg
+
         # From the ReplicaSet queries, we get the relevant Pod names
         pod_names = self.get_pod_names_from_replicaset_queries(replicaset_queries, resource_name)
 
@@ -214,18 +218,25 @@ class KubernetesMonitor(JobMonitor):
             for pod_name in pod_names
         ]
 
-        # Then, we check the pod queries for errors.
-        # only look for reasons
-        errors_we_dont_want_in_messages = ['Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage']
-        errors_we_dont_want_in_reasons = ['FailedScheduling', 'SchedulerError', 'CrashLoopBackOff']
-        for pod_query in pod_queries:
-            for event in pod_query.get('items', []):
-                for error in errors_we_dont_want_in_messages:
+        status, msg = self.check_queries_for_errors(pod_queries, errors_we_dont_want_in_messages, errors_we_dont_want_in_reasons)
+        if status is not None:
+            return status, msg
+
+        return None, "Events regarding deployments are inconclusive"
+
+
+    def check_queries_for_errors(self, queries: list[dict[str, Any]], msg_errors: list[str], reason_errors: list[str]) -> tuple[bool | None, str]:
+        for query in queries:
+            for event in query.get('items', []):
+                if event['reason'] == 'Started':
+                    return True, event
+                for error in msg_errors:
                     if error in event['message'] and event['type'] == 'Warning':
                         return False, event
-                for error in errors_we_dont_want_in_reasons:
+                for error in reason_errors:
                     if error in event['reason'] and event['type'] == 'Warning':
                         return False, event
+
         return None, "Events regarding deployments are inconclusive"
 
 
@@ -234,7 +245,7 @@ class KubernetesMonitor(JobMonitor):
         # We only look at the latest event from the query, hence the [-1]
         deployment_messages = [event['message'] for event in [deployment_query.get('items', [])[-1]]]
         replicaset_names = [
-            self.get_first_word_starting_with(message, f'{resource_name}-') # e.g. "job-adder-v-0-0-2-". note the trailing dash
+            self.get_first_word_with(message, f'{resource_name}-') # e.g. "job-adder-v-0-0-2-". note the trailing dash
             for message in deployment_messages
         ]
 
@@ -243,12 +254,14 @@ class KubernetesMonitor(JobMonitor):
 
     def get_pod_names_from_replicaset_queries(self, replicaset_queries: list[dict[str, Any]], resource_name: str) -> list[str]:
         pod_names = [
-            self.get_first_word_starting_with(message, f'{resource_name}-')
+            self.get_first_word_with(message, f'{resource_name}-')
             for replicaset_query in replicaset_queries
             for message in [event['message'] for event in replicaset_query.get('items', [])]
         ]
         return pod_names
 
 
-    def get_first_word_starting_with(self, string_of_words: str, starting_with: str) -> str:
-        return next(word for word in string_of_words.split() if word.startswith(starting_with))
+    def get_first_word_with(self, string_of_words: str, starting_with: str) -> str:
+        word = next((word for word in string_of_words.split() if starting_with in word))
+        word = word.replace('"', '') # Sometimes the word is surrounded by double quotes, which is not standard
+        return word
