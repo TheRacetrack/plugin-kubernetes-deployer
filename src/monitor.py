@@ -69,7 +69,7 @@ class KubernetesMonitor(JobMonitor):
                     restart_count += container_status.restart_count
             replica_internal_names.sort()
             infrastructure_stats = {
-                'restarts': restart_count,
+                'number_of_restarts': restart_count,
             }
 
             job = JobDto(
