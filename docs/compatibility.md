@@ -2,7 +2,9 @@
 This document describes compatibility of the versions of this plugin with the Racetrack platform.
 
 | Plugin version | Compatible Racetrack version | Notes                          |
-|----------------|------------------------------| -------------------------------|
+|----------------|------------------------------|--------------------------------|
 | 1.3.0          | `> 2.20.0`                   |                                |
-| 1.4.0          | `> 2.23.0`                   |                                |
-| 1.4.2          | `> 2.23.0`                   | Requires access to list events |
+| 1.4.0          | `>= 2.24.0`                  |                                |
+| 1.4.2          | `>= 2.24.0`                  | Requires access to list events |
+| 1.4.3          | `> 2.29.3`                   |                                |
+| 1.5.0          | `> 2.29.3`                   |                                |

@@ -4,7 +4,7 @@ import time
 from typing import Callable, Iterable, Any
 
 from kubernetes import client
-from kubernetes.client import V1ObjectMeta, V1PodStatus, ApiException
+from kubernetes.client import V1ObjectMeta, V1PodStatus, ApiException, V1ContainerStatus
 
 from lifecycle.config import Config
 from lifecycle.monitor.base import JobMonitor
@@ -56,6 +56,7 @@ class KubernetesMonitor(JobMonitor):
             internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
 
             replica_internal_names: list[str] = []
+            restart_count = 0
             for pod in pods:
                 pod_status: V1PodStatus = pod.status
                 if pod_status.pod_ip:
@@ -63,7 +64,13 @@ class KubernetesMonitor(JobMonitor):
                     replica_internal_names.append(
                         f'{pod_ip_dns}.{resource_name}.{K8S_NAMESPACE}.svc:7000'
                     )
+                container_statuses: list[V1ContainerStatus] = pod_status.container_statuses
+                for container_status in container_statuses:
+                    restart_count += container_status.restart_count
             replica_internal_names.sort()
+            infrastructure_stats = {
+                'number_of_restarts': restart_count,
+            }
 
             job = JobDto(
                 name=job_name,
@@ -76,6 +83,7 @@ class KubernetesMonitor(JobMonitor):
                 error=None,
                 infrastructure_target=self.infrastructure_name,
                 replica_internal_names=replica_internal_names,
+                infrastructure_stats=infrastructure_stats,
             )
             try:
                 job_url = self._get_internal_job_url(job)
