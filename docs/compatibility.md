@@ -8,3 +8,4 @@ This document describes compatibility of the versions of this plugin with the Ra
 | 1.4.2          | `>= 2.24.0`                  | Requires access to list events |
 | 1.4.3          | `> 2.29.3`                   |                                |
 | 1.5.0          | `> 2.29.3`                   |                                |
+| 1.5.1          | `> 2.29.3`                   |                                |
