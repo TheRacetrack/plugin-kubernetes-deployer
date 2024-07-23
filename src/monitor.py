@@ -65,8 +65,9 @@ class KubernetesMonitor(JobMonitor):
                         f'{pod_ip_dns}.{resource_name}.{K8S_NAMESPACE}.svc:7000'
                     )
                 container_statuses: list[V1ContainerStatus] = pod_status.container_statuses
-                for container_status in container_statuses:
-                    restart_count += container_status.restart_count
+                if container_statuses:
+                    for container_status in container_statuses:
+                        restart_count += container_status.restart_count
             replica_internal_names.sort()
             infrastructure_stats = {
                 'number_of_restarts': restart_count,
