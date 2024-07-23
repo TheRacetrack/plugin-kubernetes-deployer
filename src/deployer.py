@@ -11,11 +11,10 @@ from kubernetes.client import ApiException
 from kubernetes.config import load_incluster_config
 from kubernetes.client import V1Secret
 
-from lifecycle.auth.subject import get_auth_subject_by_job_family
+from lifecycle.auth.job_family import get_job_family_jwt_token
 from lifecycle.config import Config
 from lifecycle.deployer.base import JobDeployer
 from lifecycle.deployer.secrets import JobSecrets
-from lifecycle.job.models_registry import read_job_family_model
 from racetrack_client.client.env import merge_env_vars
 from racetrack_client.client_config.client_config import Credentials
 from racetrack_client.log.logs import get_logger
@@ -57,13 +56,12 @@ class KubernetesJobDeployer(JobDeployer):
         """Deploy Job on Kubernetes and expose Service accessible by Job name"""
         resource_name = job_resource_name(manifest.name, manifest.version)
         deployment_timestamp = datetime_to_timestamp(now())
-        family_model = read_job_family_model(family.name)
-        auth_subject = get_auth_subject_by_job_family(family_model)
+        auth_token = get_job_family_jwt_token(family.name)
 
         common_env_vars = {
             'PUB_URL': config.internal_pub_url,
             'JOB_NAME': manifest.name,
-            'AUTH_TOKEN': auth_subject.token,
+            'AUTH_TOKEN': auth_token,
             'JOB_DEPLOYMENT_TIMESTAMP': deployment_timestamp,
             'REQUEST_TRACING_HEADER': get_tracing_header_name(),
             'JOB_USER_MODULE_HOSTNAME': 'localhost',
