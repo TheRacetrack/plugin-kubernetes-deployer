@@ -61,6 +61,8 @@ class KubernetesJobDeployer(JobDeployer):
         common_env_vars = {
             'PUB_URL': config.internal_pub_url,
             'JOB_NAME': manifest.name,
+            'JOB_VERSION': manifest.version,
+            'JOB_MANIFEST_YAML': manifest.origin_yaml_,
             'AUTH_TOKEN': auth_token,
             'JOB_DEPLOYMENT_TIMESTAMP': deployment_timestamp,
             'REQUEST_TRACING_HEADER': get_tracing_header_name(),
