@@ -57,12 +57,13 @@ class KubernetesJobDeployer(JobDeployer):
         resource_name = job_resource_name(manifest.name, manifest.version)
         deployment_timestamp = datetime_to_timestamp(now())
         auth_token = get_job_family_jwt_token(family.name)
+        manifest_yaml = manifest.origin_yaml_.replace('\n', '\\n').replace('"', '\"')
 
         common_env_vars = {
             'PUB_URL': config.internal_pub_url,
             'JOB_NAME': manifest.name,
             'JOB_VERSION': manifest.version,
-            'JOB_MANIFEST_YAML': manifest.origin_yaml_,
+            'JOB_MANIFEST_YAML': manifest_yaml,
             'AUTH_TOKEN': auth_token,
             'JOB_DEPLOYMENT_TIMESTAMP': deployment_timestamp,
             'REQUEST_TRACING_HEADER': get_tracing_header_name(),
