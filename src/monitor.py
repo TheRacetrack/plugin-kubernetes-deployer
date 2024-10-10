@@ -1,13 +1,12 @@
 from typing import Callable, Iterable
 
-from health import check_until_job_is_operational
+from health import check_until_job_is_operational, quick_check_job_condition
 
 from kubernetes import client
 from kubernetes.client import V1ObjectMeta, V1PodStatus, ApiException, V1ContainerStatus
 
 from lifecycle.config import Config
 from lifecycle.monitor.base import JobMonitor
-from lifecycle.monitor.health import quick_check_job_condition
 from lifecycle.monitor.metric_parser import read_last_call_timestamp_metric, scrape_metrics
 from racetrack_client.log.context_error import wrap_context
 from racetrack_client.log.exception import short_exception_details
