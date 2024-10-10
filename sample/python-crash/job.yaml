@@ -1,0 +1,12 @@
+name: crash
+owner_email: sample@example.com
+jobtype: python3:latest
+version: 0.0.1
+
+git:
+  remote: https://github.com/TheRacetrack/plugin-kubernetes-infrastructure
+  directory: sample/dir_not_here
+
+jobtype_extra:
+  entrypoint_path: 'crash.py'
+  entrypoint_class: 'CrashModel'

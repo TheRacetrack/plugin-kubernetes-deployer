@@ -1,0 +1,12 @@
+name: oom
+owner_email: sample@example.com
+jobtype: python3:latest
+version: 0.0.2
+
+git:
+  remote: https://github.com/TheRacetrack/plugin-kubernetes-infrastructure
+  directory: sample/python-out-of-memory
+
+jobtype_extra:
+  entrypoint_path: 'out_of_memory.py'
+  entrypoint_class: 'OutOfMemoryModel'
