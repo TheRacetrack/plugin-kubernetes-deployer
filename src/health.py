@@ -12,8 +12,8 @@ from utils import k8s_api_client, get_job_pods
 
 from kubernetes import client
 
-errors_we_dont_want_in_messages = ['Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage', 'back-off 10s restarting failed']
-errors_we_dont_want_in_reasons = ['FailedScheduling', 'SchedulerError', 'CrashLoopBackOff', 'FailedCreate', 'OOMKilled']
+ERRORS_WE_DONT_WANT_IN_MESSAGES = ['Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage', 'back-off 10s restarting failed']
+ERRORS_WE_DONT_WANT_IN_REASONS = ['FailedScheduling', 'SchedulerError', 'CrashLoopBackOff', 'FailedCreate', 'OOMKilled']
 
 def check_until_job_is_operational(
     job: JobDto,
@@ -158,5 +158,5 @@ def check_state(state):
     if state:
         reason = getattr(state, 'reason', "No reason")
         message = getattr(state, 'message', "No message")
-        if reason in errors_we_dont_want_in_reasons or message in errors_we_dont_want_in_messages:
+        if reason in ERRORS_WE_DONT_WANT_IN_REASONS or message in ERRORS_WE_DONT_WANT_IN_MESSAGES:
             raise ValueError(f"Error in {state}: Reason - {reason}, Message - {message}")
