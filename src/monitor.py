@@ -1,7 +1,4 @@
-import json
-import time
-
-from typing import Callable, Iterable, Any
+from typing import Callable, Iterable
 
 from health import check_until_job_is_operational
 

@@ -2,23 +2,15 @@ from typing import Callable
 
 import backoff
 
-import json
-
-from typing import Any
-
 from racetrack_client.log.context_error import ContextError
 from racetrack_client.utils.request import Requests, RequestError, Response
 from lifecycle.server.cache import LifecycleCache
 from racetrack_commons.deploy.resource import job_resource_name
 from racetrack_commons.entities.dto import JobDto
-from racetrack_client.utils.shell import CommandError, shell_output
 
-from utils import get_recent_job_pod, k8s_api_client, K8S_JOB_NAME_LABEL, K8S_JOB_VERSION_LABEL, \
-    K8S_NAMESPACE, K8S_JOB_RESOURCE_LABEL, get_job_deployments, get_job_pods, get_job_pod_names
+from utils import k8s_api_client, get_job_pods
 
 from kubernetes import client
-from kubernetes.client import V1ObjectMeta, V1Pod, V1Deployment, V1PodStatus, V1ContainerStatus
-from kubernetes.config import load_incluster_config
 
 errors_we_dont_want_in_messages = ['Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage', 'back-off 10s restarting failed']
 errors_we_dont_want_in_reasons = ['FailedScheduling', 'SchedulerError', 'CrashLoopBackOff', 'FailedCreate', 'OOMKilled']
