@@ -22,7 +22,7 @@ def check_until_job_is_operational(
     headers: dict[str, str] | None = None,
 ):
     """
-    Mostly copied from racetrack/lifecycle/lifecycle/monitor/health.py, but we wanted to checks for kubernetes errors in the liviness check
+    Mostly copied from racetrack/lifecycle/lifecycle/monitor/health.py, but we wanted to checks for kubernetes errors in the liveness check
     """
     resource_name = job_resource_name(job.name, job.version)
     base_url: str = f'http://{job.internal_name}'
