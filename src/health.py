@@ -76,6 +76,14 @@ def check_job_is_alive(
                 check_state(getattr(container_status.last_state, 'terminated', None))
                 check_state(getattr(container_status.last_state, 'waiting', None))
 
+            # Check 'conditions' for pods, as pods might not have container_statuses initially
+            container_conditions = getattr(pod.status, 'conditions', [])
+            if not isinstance(container_conditions, list):
+                container_conditions = []
+
+            for container_condition in container_conditions:
+                check_condition(container_condition)
+
     """Wait until Job resource (pod or container) is up. This catches internal cluster errors"""
     try:
         response = Requests.get(f'{base_url}/live', headers=headers, timeout=3)
@@ -158,3 +166,16 @@ def check_state(state):
         message = getattr(state, 'message', "No message")
         if reason in ERRORS_WE_DONT_WANT_IN_REASONS or message in ERRORS_WE_DONT_WANT_IN_MESSAGES:
             raise ValueError(f"Error in {state}: Reason - {reason}, Message - {message}")
+
+def check_condition(condition):
+    if condition:
+        reason = getattr(condition, 'reason', "") or ""
+        message = getattr(condition, 'message', "") or ""
+
+        for err_reason in ERRORS_WE_DONT_WANT_IN_REASONS:
+            if err_reason in reason:
+                raise ValueError(f"Error {err_reason} in {condition}")
+
+        for err_message in ERRORS_WE_DONT_WANT_IN_MESSAGES:
+            if err_message in message:
+                raise ValueError(f"Error {err_message} in {condition}")
