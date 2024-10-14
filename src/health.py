@@ -56,8 +56,6 @@ def check_job_is_alive(
     expected_deployment_timestamp: int,
     headers: dict[str, str] | None,
 ) -> Response:
-
-
     """Check the containers in the pods of the job"""
     pods_by_job = get_job_pods(core_api)
     pods = pods_by_job.get(resource_name, [])
