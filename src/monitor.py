@@ -1,6 +1,6 @@
+import json
+import time
 from typing import Callable, Iterable
-
-from health import check_until_job_is_operational, quick_check_job_condition
 
 from kubernetes import client
 from kubernetes.client import V1ObjectMeta, V1PodStatus, ApiException, V1ContainerStatus
@@ -18,6 +18,7 @@ from racetrack_client.log.logs import get_logger
 
 from utils import get_recent_job_pod, k8s_api_client, K8S_JOB_NAME_LABEL, K8S_JOB_VERSION_LABEL, \
     K8S_NAMESPACE, K8S_JOB_RESOURCE_LABEL, get_job_deployments, get_job_pods
+from health import check_until_job_is_operational, quick_check_job_condition, KNOWN_FAULTY_STATE_MESSAGES, KNOWN_FAULTY_STATE_REASONS
 
 logger = get_logger(__name__)
 
@@ -96,13 +97,11 @@ class KubernetesMonitor(JobMonitor):
                 logger.warning(f'Job {job} is in bad condition: {error_details}')
             yield job
 
-    def check_job_condition(self,
-                            job: JobDto,
-                            deployment_timestamp: int = 0,
-                            on_job_alive: Callable = None,
-                            logs_on_error: bool = True,
-                            ):
+    def check_job_condition(
+        self, job: JobDto, deployment_timestamp: int = 0, on_job_alive: Callable = None, logs_on_error: bool = True,
+    ):
         try:
+            check_deployment_for_early_errors(job_resource_name(job.name, job.version))
             check_until_job_is_operational(job, deployment_timestamp, on_job_alive)
         except Exception as e:
             if logs_on_error:
@@ -124,3 +123,67 @@ class KubernetesMonitor(JobMonitor):
 
     def _get_internal_job_url(self, job: JobDto) -> str:
         return f'http://{job.internal_name}'
+
+
+def check_deployment_for_early_errors(resource_name: str):
+    """
+    Check for indicators of early errors in the deployment.
+    If errors were found, raises an error. If no errors were found, returns.
+    If unsure, continues checking until timeout, then returns.
+    """
+    loop_sleep_time = 8
+    start_time = time.time()
+    timeout = start_time + 10 * 60  # (n_minutes * seconds/minute) - we experienced a deployment failing after 8 minutes.
+    while time.time() < timeout:
+        is_event_okay, events_info = check_job_events(resource_name)
+        if is_event_okay is True:
+            logger.info(f'Deployment looks good for {resource_name} after {time.time() - start_time:.2f} seconds')
+            return
+        if is_event_okay is False:
+            raise RuntimeError(f'Events for deployment {resource_name} failed: {events_info}')
+        time.sleep(loop_sleep_time)
+
+
+def check_job_events(resource_name: str) -> tuple[bool | None, str]:
+    """A "check" returns True on deployment success, False on deployment failure, and None if unsure."""
+    deployment_events = get_events('Deployment', resource_name)
+
+    cmd = f'kubectl get replicaset --sort-by=\'.metadata.creationTimestamp\' -o json --namespace {K8S_NAMESPACE} --field-selector {K8S_JOB_RESOURCE_LABEL}={resource_name}'
+    replicasets = json.loads(shell_output(cmd))['items']
+    if not replicasets:
+        return False, f'No Replica Set found for a deployment {resource_name}'
+    replicaset_name = replicasets[0]['metadata']['name']
+    replicaset_events = get_events('ReplicaSet', replicaset_name)
+
+    cmd = f'kubectl get pods -o json --namespace {K8S_NAMESPACE} --field-selector involvedObject.kind=ReplicaSet,involvedObject.name={replicaset_name}'
+    pods = json.loads(shell_output(cmd))['items']
+    pod_names = [pod.get('metadata', {}).get('name') for pod in pods]
+    pod_events = sum((get_events('Pod', pod_name) for pod_name in pod_names), [])
+
+    return validate_events(deployment_events + replicaset_events + pod_events)
+
+
+def get_events(kind: str, resource_name: str) -> list[dict]:
+    cmd = f'kubectl get events ' \
+        f'--namespace {K8S_NAMESPACE} ' \
+        f'--sort-by=\'.metadata.creationTimestamp\' ' \
+        f'-o json' \
+        f'--field-selector involvedObject.kind={kind},involvedObject.name={resource_name}'
+    events_query = json.loads(shell_output(cmd))
+    return events_query.get('items', [])  # list of CoreV1Event
+
+
+def validate_events(events: list[dict]) -> tuple[bool | None, str]:
+    for event in events:  # CoreV1Event
+        resource_name = event.get('metadata', {}).get('name')
+        reason = event.get('reason')
+        message = event.get('message')
+        if reason == 'Started':
+            return True, ''
+        if event.get('type') == 'Warning':
+            for error in KNOWN_FAULTY_STATE_MESSAGES:
+                if error in message:
+                    return False, f'Found error in the event messages of {resource_name}: {message}'
+            if reason in KNOWN_FAULTY_STATE_REASONS:
+                return False, f'Found error in the event reasons of {resource_name}: {reason}'
+    return None, ''

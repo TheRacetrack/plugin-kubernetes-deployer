@@ -1,19 +1,24 @@
 from typing import Callable
 
 import backoff
+from kubernetes import client
+from kubernetes.client import V1ContainerState, V1PodStatus, V1ContainerStatus, V1ContainerStateTerminated, \
+    V1ContainerStateWaiting, V1Pod, V1PodCondition
 
 from racetrack_client.log.context_error import ContextError
 from racetrack_client.utils.request import Requests, RequestError, Response
-from lifecycle.server.cache import LifecycleCache
 from racetrack_commons.deploy.resource import job_resource_name
 from racetrack_commons.entities.dto import JobDto
 
 from utils import k8s_api_client, get_job_pods
 
-from kubernetes import client
+KNOWN_FAULTY_STATE_MESSAGES = {'Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage'}
+KNOWN_FAULTY_STATE_REASONS = {'FailedScheduling', 'SchedulerError', 'CrashLoopBackOff', 'FailedCreate', 'OOMKilled'}
+# Maximum number of seconds to wait until the job is alive in the cluster (/live endpoint responds)
+TIMEOUT_UNTIL_JOB_ALIVE: int = 15 * 60
+# Maximum number of seconds to wait until the job is ready (initialized)
+TIMEOUT_UNTIL_JOB_READY: int = 10 * 60
 
-ERRORS_WE_DONT_WANT_IN_MESSAGES = ['Insufficient cpu', 'Insufficient memory', 'Insufficient ephemeral-storage', 'back-off 10s restarting failed']
-ERRORS_WE_DONT_WANT_IN_REASONS = ['FailedScheduling', 'SchedulerError', 'CrashLoopBackOff', 'FailedCreate', 'OOMKilled']
 
 def check_until_job_is_operational(
     job: JobDto,
@@ -22,7 +27,18 @@ def check_until_job_is_operational(
     headers: dict[str, str] | None = None,
 ):
     """
-    Mostly copied from racetrack/lifecycle/lifecycle/monitor/health.py, but we wanted to checks for kubernetes errors in the liveness check
+    Mostly copied from racetrack/lifecycle/lifecycle/monitor/health.py
+    Check liveness and readiness of a Job in a multi-stage manner:
+    - wait for Job to accept HTTP connections, wait for k8s/docker to bring up the pod/container
+    - check liveness endpoint if there was a critical error
+    - check readiness periodically until Job is initialized
+    :param job: Job data model to check
+    :param deployment_timestamp: timestamp of deployment to verify if the running version is really the expected one
+    If set to zero, checking version is skipped.
+    :param on_job_alive: handler called when Job is live, but not ready yet
+    (server running already, but still initializing)
+    :param headers: headers to include when making a request
+    :raise RuntimeError in case of failure
     """
     resource_name = job_resource_name(job.name, job.version)
     base_url: str = f'http://{job.internal_name}'
@@ -32,17 +48,17 @@ def check_until_job_is_operational(
     # this can have long timeout since any potential malfunction in here is not related to a model/entrypoint
     # but the cluster errors that shouldn't happen usually
     @backoff.on_exception(backoff.fibo, RuntimeError, max_value=3,
-                          max_time=LifecycleCache.config.timeout_until_job_alive, jitter=None, logger=None)
-    def _wait_until_job_is_alive(_base_url: str, core_api, resource_name, expected_deployment_timestamp: int, _headers: dict[str, str] | None) -> Response:
+                          max_time=TIMEOUT_UNTIL_JOB_ALIVE, jitter=None, logger=None)
+    def _wait_until_job_is_alive(_base_url: str, expected_deployment_timestamp: int, _headers: dict[str, str] | None) -> Response:
         return check_job_is_alive(_base_url, core_api, resource_name, expected_deployment_timestamp, _headers)
 
-    response = _wait_until_job_is_alive(base_url, core_api, resource_name, deployment_timestamp, headers)
+    response = _wait_until_job_is_alive(base_url, deployment_timestamp, headers)
     _validate_live_response(response)
     if on_job_alive is not None:
         on_job_alive()
 
     @backoff.on_exception(backoff.fibo, TimeoutError, max_value=3,
-                          max_time=LifecycleCache.config.timeout_until_job_ready, jitter=None, logger=None)
+                          max_time=TIMEOUT_UNTIL_JOB_READY, jitter=None, logger=None)
     def _wait_until_job_is_ready(_base_url: str, _headers: dict[str, str] | None = None):
         check_job_is_ready(_base_url, _headers)
 
@@ -51,43 +67,16 @@ def check_until_job_is_operational(
 
 def check_job_is_alive(
     base_url: str,
-    core_api,
-    resource_name,
+    core_api: client.CoreV1Api,
+    resource_name: str,
     expected_deployment_timestamp: int,
     headers: dict[str, str] | None,
 ) -> Response:
-    """Check the containers in the pods of the job"""
-    pods_by_job = get_job_pods(core_api)
-    pods = pods_by_job.get(resource_name, [])
-
-    if not isinstance(pods, list):
-        pods = []
-
-    for pod in pods:
-        if pod.status:
-            container_statuses = getattr(pod.status, 'container_statuses', [])
-            if not isinstance(container_statuses, list):
-                container_statuses = []
-
-            for container_status in container_statuses:
-                # Check both 'state' and 'last_state' for terminated and waiting
-                check_state(getattr(container_status.state, 'terminated', None))
-                check_state(getattr(container_status.state, 'waiting', None))
-                check_state(getattr(container_status.last_state, 'terminated', None))
-                check_state(getattr(container_status.last_state, 'waiting', None))
-
-            # Check 'conditions' for pods, as pods might not have container_statuses initially
-            container_conditions = getattr(pod.status, 'conditions', [])
-            if not isinstance(container_conditions, list):
-                container_conditions = []
-
-            for container_condition in container_conditions:
-                check_condition(container_condition)
-
     """Wait until Job resource (pod or container) is up. This catches internal cluster errors"""
     try:
         response = Requests.get(f'{base_url}/live', headers=headers, timeout=3)
     except RequestError as e:
+        check_pods_are_alive(core_api, resource_name)
         raise RuntimeError(f"Cluster error: can't reach Job: {e}")
 
     # prevent from getting responses from the old, dying pod. Ensure new Job responds to probes
@@ -100,9 +89,38 @@ def check_job_is_alive(
         assert 'deployment_timestamp' in result, 'live endpoint JSON should have "deployment_timestamp" field'
         current_deployment_timestamp = int(result.get('deployment_timestamp') or 0)
         if current_deployment_timestamp != expected_deployment_timestamp:
+            check_pods_are_alive(core_api, resource_name)
             raise RuntimeError("Cluster error: can't reach newer Job, incorrect deployment_timestamp field")
 
+    check_pods_are_alive(core_api, resource_name)
     return response
+
+
+def check_pods_are_alive(core_api: client.CoreV1Api, resource_name: str) -> None:
+    pods: list[V1Pod] = get_job_pods(core_api).get(resource_name) or []
+    for pod in pods:
+        if not pod.status:
+            continue
+        pod_status: V1PodStatus = pod.status
+        container_statuses: list[V1ContainerStatus] = pod_status.container_statuses or []
+        for container_status in container_statuses:
+            state: V1ContainerState | None = container_status.state
+            if state:
+                state_terminated: V1ContainerStateTerminated = state.terminated
+                if state_terminated:
+                    if state_terminated.reason in KNOWN_FAULTY_STATE_REASONS or state_terminated.message in KNOWN_FAULTY_STATE_MESSAGES:
+                        raise ValueError(f"Pod {pod.metadata.name} is in Terminated state: {state_terminated.reason}, {state_terminated.message}")
+                state_waiting: V1ContainerStateWaiting = state.waiting
+                if state_waiting:
+                    if state_waiting.reason in KNOWN_FAULTY_STATE_REASONS or state_waiting.message in KNOWN_FAULTY_STATE_MESSAGES:
+                        raise ValueError(f"Pod {pod.metadata.name} is in Waiting state: {state_terminated.reason}, {state_terminated.message}")
+
+        # Check 'conditions' for pods, as pods might not have container_statuses initially
+        container_conditions: list[V1PodCondition] = pod_status.conditions or []
+        for condition in container_conditions:
+            if condition:
+                if condition.reason in KNOWN_FAULTY_STATE_REASONS or condition.message in KNOWN_FAULTY_STATE_MESSAGES:
+                    raise ValueError(f"Failed container condition {condition.status} for Pod {pod.metadata.name}: {condition.reason}, {condition.message}")
 
 
 def check_job_is_ready(base_url: str, headers: dict[str, str] | None) -> None:
@@ -158,24 +176,3 @@ def quick_check_job_condition(base_url: str, headers: dict[str, str] | None = No
     if response.status_code == 404:
         raise RuntimeError('Job health error: readiness endpoint not found')
     raise RuntimeError('Job is still initializing')
-
-
-def check_state(state):
-    if state:
-        reason = getattr(state, 'reason', "No reason")
-        message = getattr(state, 'message', "No message")
-        if reason in ERRORS_WE_DONT_WANT_IN_REASONS or message in ERRORS_WE_DONT_WANT_IN_MESSAGES:
-            raise ValueError(f"Error in {state}: Reason - {reason}, Message - {message}")
-
-def check_condition(condition):
-    if condition:
-        reason = getattr(condition, 'reason', "") or ""
-        message = getattr(condition, 'message', "") or ""
-
-        for err_reason in ERRORS_WE_DONT_WANT_IN_REASONS:
-            if err_reason in reason:
-                raise ValueError(f"Error {err_reason} in {condition}")
-
-        for err_message in ERRORS_WE_DONT_WANT_IN_MESSAGES:
-            if err_message in message:
-                raise ValueError(f"Error {err_message} in {condition}")
