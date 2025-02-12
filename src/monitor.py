@@ -131,13 +131,15 @@ def check_deployment_for_early_errors(resource_name: str):
     If errors were found, raises an error. If no errors were found, returns.
     If unsure, continues checking until timeout, then returns.
     """
-    loop_sleep_time = 8
+    attempts = 0
+    loop_sleep_time = 5
     start_time = time.time()
     timeout = start_time + 10 * 60  # (n_minutes * seconds/minute) - we experienced a deployment failing after 8 minutes.
     while time.time() < timeout:
         is_event_okay, events_info = check_job_events(resource_name)
+        attempts += 1
         if is_event_okay is True:
-            logger.info(f'Deployment looks good for {resource_name} after {time.time() - start_time:.2f} seconds')
+            logger.info(f'Deployment {resource_name} looks good in Kubernetes after {time.time() - start_time:.2f} seconds, {attempts} attempts')
             return
         if is_event_okay is False:
             raise RuntimeError(f'Events for deployment {resource_name} failed: {events_info}')
@@ -148,14 +150,15 @@ def check_job_events(resource_name: str) -> tuple[bool | None, str]:
     """A "check" returns True on deployment success, False on deployment failure, and None if unsure."""
     deployment_events = get_events('Deployment', resource_name)
 
-    cmd = f'kubectl get replicaset --sort-by=\'.metadata.creationTimestamp\' -o json --namespace {K8S_NAMESPACE} --field-selector {K8S_JOB_RESOURCE_LABEL}={resource_name}'
+    cmd = f'kubectl get replicaset --sort-by=\'.metadata.creationTimestamp\' -o json --namespace {K8S_NAMESPACE} --selector {K8S_JOB_RESOURCE_LABEL}={resource_name}'
     replicasets = json.loads(shell_output(cmd))['items']
     if not replicasets:
         return False, f'No Replica Set found for a deployment {resource_name}'
-    replicaset_name = replicasets[0]['metadata']['name']
+    replicaset_name = replicasets[-1]['metadata']['name']
+    replicaset_template_hash = replicasets[-1]['metadata']['labels'].get('pod-template-hash')
     replicaset_events = get_events('ReplicaSet', replicaset_name)
 
-    cmd = f'kubectl get pods -o json --namespace {K8S_NAMESPACE} --field-selector involvedObject.kind=ReplicaSet,involvedObject.name={replicaset_name}'
+    cmd = f'kubectl get pods -o json --namespace {K8S_NAMESPACE} --selector pod-template-hash={replicaset_template_hash}'
     pods = json.loads(shell_output(cmd))['items']
     pod_names = [pod.get('metadata', {}).get('name') for pod in pods]
     pod_events = sum((get_events('Pod', pod_name) for pod_name in pod_names), [])
@@ -164,11 +167,11 @@ def check_job_events(resource_name: str) -> tuple[bool | None, str]:
 
 
 def get_events(kind: str, resource_name: str) -> list[dict]:
-    cmd = f'kubectl get events ' \
-        f'--namespace {K8S_NAMESPACE} ' \
-        f'--sort-by=\'.metadata.creationTimestamp\' ' \
-        f'-o json' \
-        f'--field-selector involvedObject.kind={kind},involvedObject.name={resource_name}'
+    cmd = f'kubectl get events' \
+        f' --namespace {K8S_NAMESPACE}' \
+        f' --sort-by=\'.metadata.creationTimestamp\'' \
+        f' -o json' \
+        f' --field-selector involvedObject.kind={kind},involvedObject.name={resource_name}'
     events_query = json.loads(shell_output(cmd))
     return events_query.get('items', [])  # list of CoreV1Event
 
