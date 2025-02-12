@@ -142,7 +142,7 @@ def check_deployment_for_early_errors(resource_name: str):
             logger.info(f'Deployment {resource_name} looks good in Kubernetes after {time.time() - start_time:.2f} seconds, {attempts} attempts')
             return
         if is_event_okay is False:
-            raise RuntimeError(f'Events for deployment {resource_name} failed: {events_info}')
+            raise RuntimeError(f'Found faulty events in Kubernetes for {resource_name}: {events_info}')
         time.sleep(loop_sleep_time)
 
 
@@ -163,7 +163,7 @@ def check_job_events(resource_name: str) -> tuple[bool | None, str]:
     pod_names = [pod.get('metadata', {}).get('name') for pod in pods]
     pod_events = sum((get_events('Pod', pod_name) for pod_name in pod_names), [])
 
-    return validate_events(deployment_events + replicaset_events + pod_events)
+    return validate_events(pod_events + replicaset_events + deployment_events)
 
 
 def get_events(kind: str, resource_name: str) -> list[dict]:
@@ -173,7 +173,7 @@ def get_events(kind: str, resource_name: str) -> list[dict]:
         f' -o json' \
         f' --field-selector involvedObject.kind={kind},involvedObject.name={resource_name}'
     events_query = json.loads(shell_output(cmd))
-    return events_query.get('items', [])  # list of CoreV1Event
+    return events_query.get('items', [])[::-1]  # list of CoreV1Event dictionaries
 
 
 def validate_events(events: list[dict]) -> tuple[bool | None, str]:
@@ -186,7 +186,7 @@ def validate_events(events: list[dict]) -> tuple[bool | None, str]:
         if event.get('type') == 'Warning':
             for error in KNOWN_FAULTY_STATE_MESSAGES:
                 if error in message:
-                    return False, f'Found error in the event messages of {resource_name}: {message}'
+                    return False, f'{resource_name} has produced erroneous event message: {message}'
             if reason in KNOWN_FAULTY_STATE_REASONS:
-                return False, f'Found error in the event reasons of {resource_name}: {reason}'
+                return False, f'{resource_name} has produced erroneous event reason: {reason}'
     return None, ''
