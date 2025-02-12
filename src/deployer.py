@@ -125,7 +125,7 @@ class KubernetesJobDeployer(JobDeployer):
 
         _apply_templated_resource('job_template.yaml', render_vars, self.src_dir)
 
-        internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
+        internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc.cluster.local:7000'
         return JobDto(
             name=manifest.name,
             version=manifest.version,

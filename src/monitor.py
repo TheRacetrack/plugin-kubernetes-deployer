@@ -51,7 +51,7 @@ class KubernetesMonitor(JobMonitor):
                 continue
 
             start_timestamp = datetime_to_timestamp(recent_pod.metadata.creation_timestamp)
-            internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc:7000'
+            internal_name = f'{resource_name}.{K8S_NAMESPACE}.svc.cluster.local:7000'
 
             replica_internal_names: list[str] = []
             restart_count = 0
@@ -60,7 +60,7 @@ class KubernetesMonitor(JobMonitor):
                 if pod_status.pod_ip:
                     pod_ip_dns: str = pod_status.pod_ip.replace('.', '-')
                     replica_internal_names.append(
-                        f'{pod_ip_dns}.{resource_name}.{K8S_NAMESPACE}.svc:7000'
+                        f'{pod_ip_dns}.{resource_name}.{K8S_NAMESPACE}.svc.cluster.local:7000'
                     )
                 container_statuses: list[V1ContainerStatus] = pod_status.container_statuses
                 if container_statuses:
