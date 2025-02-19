@@ -150,15 +150,16 @@ def check_job_events(resource_name: str) -> tuple[bool | None, str]:
     """A "check" returns True on deployment success, False on deployment failure, and None if unsure."""
     deployment_events = get_events('Deployment', resource_name)
 
-    cmd = f'kubectl get replicaset --sort-by=\'.metadata.creationTimestamp\' -o json --namespace {K8S_NAMESPACE} --selector {K8S_JOB_RESOURCE_LABEL}={resource_name}'
-    replicasets = json.loads(shell_output(cmd))['items']
-    if not replicasets:
-        return False, f'No Replica Set found for a deployment {resource_name}'
-    replicaset_name = replicasets[-1]['metadata']['name']
-    replicaset_template_hash = replicasets[-1]['metadata']['labels'].get('pod-template-hash')
+    cmd = f'kubectl get pods --sort-by=\'.metadata.creationTimestamp\' --namespace {K8S_NAMESPACE} --selector {K8S_JOB_RESOURCE_LABEL}={resource_name} -o jsonpath=\'{{.items.*.metadata.labels.pod-template-hash}}\''
+    pod_template_hashes = shell_output(cmd).strip().split()
+    if not pod_template_hashes:
+        return False, f'No Pods found matching the deployment {resource_name}'
+    pod_template_hash = pod_template_hashes[-1].strip()
+
+    replicaset_name = f'{resource_name}-{pod_template_hash}'
     replicaset_events = get_events('ReplicaSet', replicaset_name)
 
-    cmd = f'kubectl get pods -o json --namespace {K8S_NAMESPACE} --selector pod-template-hash={replicaset_template_hash}'
+    cmd = f'kubectl get pods -o json --namespace {K8S_NAMESPACE} --selector pod-template-hash={pod_template_hash}'
     pods = json.loads(shell_output(cmd))['items']
     pod_names = [pod.get('metadata', {}).get('name') for pod in pods]
     pod_events = sum((get_events('Pod', pod_name) for pod_name in pod_names), [])
